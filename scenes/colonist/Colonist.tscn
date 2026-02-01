@@ -1,0 +1,31 @@
+[gd_scene load_steps=5 format=3 uid="uid://colonist_scene"]
+
+[ext_resource type="Script" path="res://scripts/colonist/Colonist.cs" id="1_colonist"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_colonist"]
+radius = 0.3
+height = 1.6
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_colonist"]
+radius = 0.3
+height = 1.6
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_colonist"]
+albedo_color = Color(0.2, 0.4, 0.9, 1)
+
+[node name="Colonist" type="CharacterBody3D" groups=["colonists"]]
+script = ExtResource("1_colonist")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
+shape = SubResource("CapsuleShape3D_colonist")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.8, 0)
+mesh = SubResource("CapsuleMesh_colonist")
+surface_material_override/0 = SubResource("StandardMaterial3D_colonist")
+
+[node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
+path_desired_distance = 0.5
+target_desired_distance = 0.5
+avoidance_enabled = false

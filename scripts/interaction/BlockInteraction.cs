@@ -4,7 +4,7 @@ using ColonySim.World;
 namespace ColonySim.Interaction;
 
 /// <summary>
-/// Handles mouse interaction for block placement/removal.
+/// Handles mouse interaction for block removal and colonist movement.
 /// Attach as child of World node.
 /// </summary>
 public partial class BlockInteraction : Node3D
@@ -17,6 +17,7 @@ public partial class BlockInteraction : Node3D
 
     private World.World? _world;
     private Camera3D? _camera;
+    private Colonist.Colonist? _selectedColonist;
 
     public override void _Ready()
     {
@@ -33,6 +34,19 @@ public partial class BlockInteraction : Node3D
         if (_camera == null)
         {
             GD.PrintErr("BlockInteraction: No Camera3D found in viewport!");
+        }
+
+        // Find colonist in scene (temporary - will improve later)
+        // Use CallDeferred to ensure scene tree is ready
+        CallDeferred(MethodName.FindColonist);
+    }
+
+    private void FindColonist()
+    {
+        _selectedColonist = GetTree().GetFirstNodeInGroup("colonists") as Colonist.Colonist;
+        if (_selectedColonist != null)
+        {
+            GD.Print("BlockInteraction: Found colonist!");
         }
     }
 
@@ -79,7 +93,7 @@ public partial class BlockInteraction : Node3D
 
         if (remove)
         {
-            // Remove the block that was hit
+            // Left-click = remove the block that was hit
             // Offset slightly into the block to get correct position
             var blockPos = (hitPos - hitNormal * 0.1f).Floor();
             var worldBlockPos = new Vector3I((int)blockPos.X, (int)blockPos.Y, (int)blockPos.Z);
@@ -88,11 +102,18 @@ public partial class BlockInteraction : Node3D
         }
         else
         {
-            // Place block adjacent to the hit face
-            var blockPos = (hitPos + hitNormal * 0.1f).Floor();
-            var worldBlockPos = new Vector3I((int)blockPos.X, (int)blockPos.Y, (int)blockPos.Z);
-            _world!.SetBlock(worldBlockPos, BlockType.Dirt);
-            GD.Print($"Placed block at {worldBlockPos}");
+            // Right-click = move colonist to clicked position
+            if (_selectedColonist != null)
+            {
+                // Target the top of the clicked block (center of block, on top surface)
+                var blockPos = (hitPos - hitNormal * 0.1f).Floor();
+                var targetPos = new Vector3(blockPos.X + 0.5f, blockPos.Y + 1.0f, blockPos.Z + 0.5f);
+                _selectedColonist.SetDestination(targetPos);
+            }
+            else
+            {
+                GD.Print("No colonist selected!");
+            }
         }
     }
 }
