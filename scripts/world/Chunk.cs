@@ -1,4 +1,5 @@
 using Godot;
+using System.Collections.Generic;
 
 namespace ColonySim.World;
 
@@ -47,6 +48,11 @@ public partial class Chunk : Node3D
     /// NavigationRegion3D for per-chunk pathfinding.
     /// </summary>
     private NavigationRegion3D _navigationRegion = null!;
+
+    /// <summary>
+    /// NavigationLink3D nodes for height transitions within this chunk.
+    /// </summary>
+    private List<NavigationLink3D> _navigationLinks = new();
 
     /// <summary>
     /// Flag indicating the mesh needs regeneration.
@@ -305,7 +311,43 @@ public partial class Chunk : Node3D
         var navMesh = ChunkNavigation.GenerateNavigationMesh(this);
         _navigationRegion.NavigationMesh = navMesh;
 
+        // Also regenerate navigation links for height transitions
+        RegenerateNavigationLinks();
+
         GD.Print($"Navigation: {navMesh.GetPolygonCount()} walkable surfaces");
+    }
+
+    /// <summary>
+    /// Regenerates NavigationLink3D nodes for 1-block height transitions.
+    /// </summary>
+    private void RegenerateNavigationLinks()
+    {
+        // Remove old links
+        foreach (var link in _navigationLinks)
+        {
+            link.QueueFree();
+        }
+        _navigationLinks.Clear();
+
+        // Find and create new links
+        var heightLinks = ChunkNavigation.FindHeightLinks(this);
+
+        foreach (var heightLink in heightLinks)
+        {
+            var link = new NavigationLink3D();
+            link.StartPosition = heightLink.LowerPosition;
+            link.EndPosition = heightLink.UpperPosition;
+            link.Bidirectional = true;
+            link.EnterCost = 0.5f;  // Slight cost to prefer flat paths
+            link.TravelCost = 1.0f;
+            AddChild(link);
+            _navigationLinks.Add(link);
+        }
+
+        if (heightLinks.Count > 0)
+        {
+            GD.Print($"Navigation links: {heightLinks.Count} height transitions");
+        }
     }
 
     /// <summary>

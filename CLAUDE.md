@@ -132,77 +132,85 @@ Standard NavMesh does NOT handle voxel terrain well:
 ```
 colonysim-3d/
 ├── project.godot
-├── CLAUDE.md                    # This file
+├── CLAUDE.md                     # This file (project bible)
+├── LESSONS_LEARNED.md            # Post-mortems and debugging notes
 ├── scripts/
 │   ├── world/
-│   │   ├── World.cs             # World manager, chunk loading/unloading
-│   │   ├── Chunk.cs             # Single chunk: data, mesh, collision, nav
+│   │   ├── World.cs              # World manager, chunk loading/unloading
+│   │   ├── Chunk.cs              # Single chunk: data, mesh, collision, nav, links
 │   │   ├── ChunkMeshGenerator.cs # Procedural mesh from block data
-│   │   ├── ChunkNavigation.cs   # Per-chunk navmesh generation
-│   │   └── Block.cs             # Block type definitions
+│   │   ├── ChunkNavigation.cs    # NavMesh + NavigationLink generation
+│   │   ├── TerrainGenerator.cs   # FastNoiseLite procedural terrain
+│   │   └── Block.cs              # Block type definitions
 │   ├── colonist/
-│   │   ├── Colonist.cs          # NPC base class
-│   │   └── ColonistAI.cs        # Task execution, pathfinding
+│   │   └── Colonist.cs           # CharacterBody3D + NavigationAgent3D + jump
+│   ├── interaction/
+│   │   └── BlockInteraction.cs   # Mouse raycast, block removal, colonist control
 │   └── camera/
-│       ├── RTSCamera.cs         # Top-down/isometric camera (future)
-│       └── OrbitCamera.cs       # Debug camera that orbits target
+│       └── OrbitCamera.cs        # Debug camera that orbits target
 ├── scenes/
-│   ├── main.tscn                # Entry point
-│   ├── world/
-│   │   └── Chunk.tscn           # Chunk prefab (if needed)
+│   ├── main.tscn                 # Entry point
 │   └── colonist/
-│       └── Colonist.tscn        # Colonist prefab
-├── resources/
-│   └── blocks/                  # Block textures, materials
-└── godot-docs-master/           # Godot 4.6 documentation (reference)
+│       └── Colonist.tscn         # Colonist prefab (CharacterBody3D)
+└── godot-docs-master/            # Godot 4.6 documentation (reference)
 ```
 
 ---
 
-## 6. Implementation Phases
+## 6. Foundation Phases (COMPLETE)
 
-### Phase 1: Single Chunk Rendering (FIRST MILESTONE) ✅ COMPLETE
-- [x] Create `Chunk.cs` with 16x16x16 block data array
-- [x] Hardcode some blocks (e.g., fill bottom 4 layers with stone)
-- [x] Generate ArrayMesh showing only exposed faces
-- [x] Attach to MeshInstance3D and see cubes render
-- **Success criteria:** Run game, see colored cubes
+> **All 7 foundation phases are complete.** The voxel engine core is functional.
 
-### Phase 2: Chunk Collision ✅ COMPLETE
-- [x] Add StaticBody3D + collision shape to chunk
-- [x] Test with a falling RigidBody3D or simple physics object
-- **Success criteria:** Ball falls, lands on terrain, bounces into hole
+| Phase | Description | Status |
+|-------|-------------|--------|
+| 1. Single Chunk Rendering | ArrayMesh generation, face culling | ✅ |
+| 2. Chunk Collision | ConcavePolygonShape3D per chunk | ✅ |
+| 3. Multi-Chunk World | World manager, 3x3 chunk loading | ✅ |
+| 4. Block Modification | Click to add/remove blocks | ✅ |
+| 5. Per-Chunk Navigation | NavigationRegion3D + NavMesh | ✅ |
+| 6. Basic Colonist | CharacterBody3D + NavigationAgent3D | ✅ |
+| 7. World Generation | FastNoiseLite procedural terrain | ✅ |
 
-### Phase 3: Multi-Chunk World ✅ COMPLETE
-- [x] Create `World.cs` to manage multiple chunks
-- [x] Load chunks in a small area (e.g., 3x3 chunks)
-- [x] Basic camera to view the world
-- **Success criteria:** 3x3 chunk terrain renders with seamless boundaries
+---
 
-### Phase 4: Block Modification ✅ COMPLETE
-- [x] Implement `SetBlock(Vector3I position, BlockType type)`
-- [x] Trigger mesh + collision regeneration for affected chunk
-- [x] Test: click to remove/add blocks
-- **Success criteria:** Left-click removes, right-click places, instant updates
+## 7. Feature Enhancements
 
-### Phase 5: Per-Chunk Navigation ✅ COMPLETE
-- [x] Generate NavigationMesh from walkable surfaces (top of solid blocks)
-- [x] Create NavigationRegion3D per chunk
-- [x] Regenerate navmesh when blocks change
-- [x] Edge connection margin configured for chunk boundaries
-- **Success criteria:** NavMesh on grass surfaces, updates with block changes
+### Height Traversal (1-Block Jumping) ✅ COMPLETE
+- [x] NavigationLink3D connects walkable surfaces at different heights
+- [x] Colonist has gravity and jump physics
+- [x] `LinkReached` signal triggers jump when going up
+- [x] Falling down handled by gravity (no jump needed)
+- **How it works:**
+  - `ChunkNavigation.FindHeightLinks()` detects adjacent blocks with 1-block height difference
+  - `Chunk.RegenerateNavigationLinks()` creates bidirectional NavigationLink3D nodes
+  - `Colonist.OnLinkReached()` triggers `_shouldJump = true` when going up
+  - Horizontal momentum continues during jump → parabolic arc to upper platform
 
-### Phase 6: Basic Colonist ✅ COMPLETE
-- [x] Spawn a simple colonist with NavigationAgent3D
-- [x] Click to set destination, colonist pathfinds and walks there
-- [x] Handle navigation across chunk boundaries
-- **Success criteria:** Right-click moves colonist, pathfinds across chunks
+---
 
-### Phase 7: World Generation ✅ COMPLETE
-- [x] Implement simple noise-based terrain generation
-- [x] Replace hardcoded blocks with procedural generation
-- [x] Basic height variation using FastNoiseLite
-- **Success criteria:** Rolling hills, seamless chunk boundaries
+## 8. Future Development Roadmap
+
+### World & Terrain
+- [ ] **More Block Types** - Wood, ore, sand, water, etc.
+- [ ] **Better Terrain Generation** - Caves, overhangs, ore veins
+- [ ] **Biomes** - Different terrain styles based on location
+- [ ] **Chunk Streaming** - Load/unload chunks based on camera position
+- [ ] **Vertical Chunks** - Multiple Y-level chunks for taller worlds
+
+### Camera & Controls
+- [ ] **RTS Camera** - Top-down/isometric view with pan, zoom, rotate
+- [ ] **Block Placement** - Re-enable placing blocks (currently only removal)
+- [ ] **Selection System** - Click to select colonists, blocks, areas
+
+### Colonist & AI (Later)
+- [ ] **Multiple Colonists** - Spawn and manage several colonists
+- [ ] **Task System** - Jobs like mine, build, haul
+- [ ] **Colonist Needs** - Hunger, rest, mood
+- [ ] **Inventory/Resources** - Blocks drop items, colonists carry them
+
+### Infrastructure (Later)
+- [ ] **Save/Load** - Serialize world and colonist state
+- [ ] **UI System** - Menus, status panels, notifications
 
 ---
 
@@ -536,6 +544,32 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
   - Colonist pathfinding works on varied terrain ✅
   - Screenshot confirmed: rolling hills with proper layers visible
 
+### Session 9 (Height Traversal Feature)
+- **Implemented 1-block height traversal (jumping)**
+- Modified `scripts/colonist/Colonist.cs`:
+  - Added `JumpVelocity` (6.0) and `Gravity` (20.0) export properties
+  - Added gravity in `_PhysicsProcess`: `velocity.Y -= Gravity * delta` when not on floor
+  - Connected `LinkReached` signal to detect height transitions
+  - Trigger jump when link exit is higher than entry: `_shouldJump = true`
+  - Horizontal movement continues during jump → parabolic arc
+- Modified `scripts/world/ChunkNavigation.cs`:
+  - Added `HeightLink` struct with LowerPosition/UpperPosition
+  - Added `FindHeightLinks(Chunk)` method
+  - Checks 4 horizontal neighbors for walkable surface 1 block higher
+- Modified `scripts/world/Chunk.cs`:
+  - Added `List<NavigationLink3D> _navigationLinks` field
+  - Added `RegenerateNavigationLinks()` method
+  - Creates bidirectional links with `EnterCost = 0.5f` (prefer flat paths)
+  - Links regenerate when blocks change
+- **How NavigationLink3D works:**
+  - Bridges disconnected NavMesh polygons at different heights
+  - NavigationServer3D includes links in pathfinding graph
+  - Agent path can now include link waypoints
+  - `LinkReached` signal fires when agent approaches link
+- **Movement physics:**
+  - Going UP: Jump triggered, horizontal momentum carries colonist in arc
+  - Going DOWN: Gravity handles fall naturally (no jump needed)
+
 ---
 
-*Last updated: 2026-02-01*
+*Last updated: 2026-02-02*
