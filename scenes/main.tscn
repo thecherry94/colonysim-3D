@@ -1,7 +1,17 @@
-[gd_scene load_steps=3 format=3 uid="uid://dkyu0hyj1nkei"]
+[gd_scene load_steps=6 format=3 uid="uid://dkyu0hyj1nkei"]
 
 [ext_resource type="Script" path="res://scripts/world/Chunk.cs" id="1_chunk"]
 [ext_resource type="Script" path="res://scripts/camera/OrbitCamera.cs" id="2_camera"]
+
+[sub_resource type="SphereShape3D" id="SphereShape3D_test"]
+radius = 0.3
+
+[sub_resource type="SphereMesh" id="SphereMesh_test"]
+radius = 0.3
+height = 0.6
+
+[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_test"]
+albedo_color = Color(1, 0.2, 0.1, 1)
 
 [node name="origin" type="Node3D"]
 
@@ -14,3 +24,13 @@ script = ExtResource("2_camera")
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.707107, -0.5, 0.5, 0, 0.707107, 0.707107, -0.707107, -0.5, 0.5, 0, 10, 0)
 shadow_enabled = true
+
+[node name="TestBall" type="RigidBody3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 8.5, 15, 8.5)
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="TestBall"]
+shape = SubResource("SphereShape3D_test")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="TestBall"]
+mesh = SubResource("SphereMesh_test")
+surface_material_override/0 = SubResource("StandardMaterial3D_test")

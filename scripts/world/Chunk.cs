@@ -34,6 +34,16 @@ public partial class Chunk : Node3D
     private StandardMaterial3D[] _materials = null!;
 
     /// <summary>
+    /// StaticBody3D for chunk collision.
+    /// </summary>
+    private StaticBody3D _staticBody = null!;
+
+    /// <summary>
+    /// CollisionShape3D child of the StaticBody3D.
+    /// </summary>
+    private CollisionShape3D _collisionShape = null!;
+
+    /// <summary>
     /// Flag indicating the mesh needs regeneration.
     /// </summary>
     private bool _isDirty = true;
@@ -42,11 +52,12 @@ public partial class Chunk : Node3D
     {
         InitializeMaterials();
         InitializeMeshInstance();
+        InitializeCollision();
 
         // For testing: fill with some blocks
         FillTestData();
 
-        // Generate initial mesh
+        // Generate initial mesh and collision
         RegenerateMesh();
     }
 
@@ -92,6 +103,46 @@ public partial class Chunk : Node3D
         if (Engine.IsEditorHint())
         {
             _meshInstance.Owner = GetTree().EditedSceneRoot;
+        }
+    }
+
+    /// <summary>
+    /// Creates or finds the StaticBody3D and CollisionShape3D nodes.
+    /// </summary>
+    private void InitializeCollision()
+    {
+        // Check if we already have a StaticBody3D child (editor reload case)
+        foreach (var child in GetChildren())
+        {
+            if (child is StaticBody3D existingBody)
+            {
+                _staticBody = existingBody;
+                foreach (var bodyChild in _staticBody.GetChildren())
+                {
+                    if (bodyChild is CollisionShape3D existingShape)
+                    {
+                        _collisionShape = existingShape;
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Create new StaticBody3D
+        _staticBody = new StaticBody3D();
+        _staticBody.Name = "ChunkCollision";
+        AddChild(_staticBody);
+
+        // Create CollisionShape3D inside StaticBody3D
+        _collisionShape = new CollisionShape3D();
+        _collisionShape.Name = "CollisionShape";
+        _staticBody.AddChild(_collisionShape);
+
+        // In editor, set owner so it saves with the scene
+        if (Engine.IsEditorHint())
+        {
+            _staticBody.Owner = GetTree().EditedSceneRoot;
+            _collisionShape.Owner = GetTree().EditedSceneRoot;
         }
     }
 
@@ -151,7 +202,56 @@ public partial class Chunk : Node3D
         ArrayMesh mesh = ChunkMeshGenerator.GenerateMesh(this, _materials);
         _meshInstance.Mesh = mesh;
 
+        // Regenerate collision to match the new mesh
+        RegenerateCollision();
+
         _isDirty = false;
+    }
+
+    /// <summary>
+    /// Regenerates the chunk collision shape from the current mesh.
+    /// Must be called after RegenerateMesh() when _meshInstance.Mesh is valid.
+    /// </summary>
+    private void RegenerateCollision()
+    {
+        var mesh = _meshInstance.Mesh as ArrayMesh;
+        if (mesh == null || mesh.GetSurfaceCount() == 0)
+        {
+            _collisionShape.Shape = null;
+            return;
+        }
+
+        // Collect all faces from all surfaces into flat vertex list
+        var collisionVertices = new System.Collections.Generic.List<Vector3>();
+
+        for (int surfaceIdx = 0; surfaceIdx < mesh.GetSurfaceCount(); surfaceIdx++)
+        {
+            var arrays = mesh.SurfaceGetArrays(surfaceIdx);
+            var vertices = (Vector3[])arrays[(int)Mesh.ArrayType.Vertex];
+            var indices = (int[])arrays[(int)Mesh.ArrayType.Index];
+
+            // Expand indexed triangles to flat vertex list
+            // ConcavePolygonShape3D expects sequential triples: [v0, v1, v2, v3, v4, v5, ...]
+            for (int i = 0; i < indices.Length; i++)
+            {
+                collisionVertices.Add(vertices[indices[i]]);
+            }
+        }
+
+        if (collisionVertices.Count == 0)
+        {
+            _collisionShape.Shape = null;
+            return;
+        }
+
+        // Create the collision shape
+        var shape = new ConcavePolygonShape3D();
+        shape.BackfaceCollision = true;  // Collide from both sides
+        shape.SetFaces(collisionVertices.ToArray());
+
+        _collisionShape.Shape = shape;
+
+        GD.Print($"Collision: {collisionVertices.Count / 3} triangles");
     }
 
     /// <summary>

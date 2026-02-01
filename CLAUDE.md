@@ -169,9 +169,10 @@ colonysim-3d/
 - [x] Attach to MeshInstance3D and see cubes render
 - **Success criteria:** Run game, see colored cubes
 
-### Phase 2: Chunk Collision
-- [ ] Add StaticBody3D + collision shape to chunk
-- [ ] Test with a falling RigidBody3D or simple physics object
+### Phase 2: Chunk Collision ✅ COMPLETE
+- [x] Add StaticBody3D + collision shape to chunk
+- [x] Test with a falling RigidBody3D or simple physics object
+- **Success criteria:** Ball falls, lands on terrain, bounces into hole
 
 ### Phase 3: Multi-Chunk World
 - [ ] Create `World.cs` to manage multiple chunks
@@ -378,6 +379,23 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
   - **Proper fix:** Reversed triangle indices from `{ 0, 1, 2, 0, 2, 3 }` to `{ 0, 2, 1, 0, 3, 2 }`
   - This keeps vertices as-is but changes winding order, so normals point outward correctly
 - Created `scripts/camera/OrbitCamera.cs` - Debug camera that orbits around a target point
+
+### Session 3 (Phase 2 Implementation)
+- **Implemented Phase 2: Chunk Collision**
+- Added collision system to `Chunk.cs`:
+  - `StaticBody3D` + `CollisionShape3D` child nodes
+  - `InitializeCollision()` method (mirrors `InitializeMeshInstance()` pattern)
+  - `RegenerateCollision()` method extracts vertices from mesh, expands indices to flat list
+  - Uses `ConcavePolygonShape3D` with `BackfaceCollision = true`
+- Updated `main.tscn` with test ball (RigidBody3D + SphereShape3D)
+- **Test results:**
+  - Ball falls from height and lands on grass surface ✅
+  - Ball does NOT fall through terrain ✅
+  - Ball falls into hole and collides with pit walls ✅
+- **Key technical detail:** ConcavePolygonShape3D requires flat vertex list (no indices)
+  - Our mesh uses indexed triangles: `vertices[] + indices[]`
+  - Collision needs: sequential vertex triples `[v0, v1, v2, v3, v4, v5, ...]`
+  - Solution: Loop through indices, append `vertices[indices[i]]`
 
 ---
 
