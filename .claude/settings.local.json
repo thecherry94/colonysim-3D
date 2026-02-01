@@ -5,7 +5,11 @@
       "Bash(findstr:*)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:godotengine.org)",
-      "WebFetch(domain:forum.godotengine.org)"
+      "WebFetch(domain:forum.godotengine.org)",
+      "mcp__Desktop_Commander__list_directory",
+      "Bash(dotnet build:*)",
+      "mcp__blender__get_viewport_screenshot",
+      "WebFetch(domain:godotforums.org)"
     ]
   }
 }

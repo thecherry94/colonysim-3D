@@ -1,0 +1,16 @@
+[gd_scene load_steps=3 format=3 uid="uid://dkyu0hyj1nkei"]
+
+[ext_resource type="Script" path="res://scripts/world/Chunk.cs" id="1_chunk"]
+[ext_resource type="Script" path="res://scripts/camera/OrbitCamera.cs" id="2_camera"]
+
+[node name="origin" type="Node3D"]
+
+[node name="Chunk" type="Node3D" parent="."]
+script = ExtResource("1_chunk")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+script = ExtResource("2_camera")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.707107, -0.5, 0.5, 0, 0.707107, 0.707107, -0.707107, -0.5, 0.5, 0, 10, 0)
+shadow_enabled = true

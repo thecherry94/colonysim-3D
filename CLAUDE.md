@@ -145,7 +145,8 @@ colonysim-3d/
 │   │   ├── Colonist.cs          # NPC base class
 │   │   └── ColonistAI.cs        # Task execution, pathfinding
 │   └── camera/
-│       └── RTSCamera.cs         # Top-down/isometric camera
+│       ├── RTSCamera.cs         # Top-down/isometric camera (future)
+│       └── OrbitCamera.cs       # Debug camera that orbits target
 ├── scenes/
 │   ├── main.tscn                # Entry point
 │   ├── world/
@@ -161,11 +162,11 @@ colonysim-3d/
 
 ## 6. Implementation Phases
 
-### Phase 1: Single Chunk Rendering (FIRST MILESTONE)
-- [ ] Create `Chunk.cs` with 16x16x16 block data array
-- [ ] Hardcode some blocks (e.g., fill bottom 4 layers with stone)
-- [ ] Generate ArrayMesh showing only exposed faces
-- [ ] Attach to MeshInstance3D and see cubes render
+### Phase 1: Single Chunk Rendering (FIRST MILESTONE) ✅ COMPLETE
+- [x] Create `Chunk.cs` with 16x16x16 block data array
+- [x] Hardcode some blocks (e.g., fill bottom 4 layers with stone)
+- [x] Generate ArrayMesh showing only exposed faces
+- [x] Attach to MeshInstance3D and see cubes render
 - **Success criteria:** Run game, see colored cubes
 
 ### Phase 2: Chunk Collision
@@ -307,6 +308,12 @@ Vector3 topNormal = Vector3.Up;
    - World block position: `chunkPos * 16 + localPos`
    - Use `Vector3I` for block coords, `Vector3` for world positions
 
+7. **Winding order fix**
+   - Our face vertices are defined counter-clockwise (Godot expects clockwise)
+   - **Fix:** Reverse the triangle indices from `{ 0, 1, 2, 0, 2, 3 }` to `{ 0, 2, 1, 0, 3, 2 }`
+   - This ensures correct winding + correct normals for proper lighting
+   - Use standard `CullMode.Back` (not Front workaround)
+
 ---
 
 ## 9. Documentation References
@@ -348,6 +355,29 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
 - **Navigation research:**
   - Standard NavMesh has voxel height-step issues
   - Will need hybrid/custom approach for colony sim
+
+### Session 2 (Phase 1 Implementation)
+- **Implemented Phase 1: Single Chunk Rendering**
+- Created `scripts/world/Block.cs` - BlockType enum (Air, Stone, Dirt, Grass) with color/solid metadata
+- Created `scripts/world/ChunkMeshGenerator.cs` - Static mesh generator with face culling
+  - 6-face vertex data with clockwise winding order
+  - Only renders exposed faces (adjacent to Air blocks)
+  - Separate mesh surfaces per block type for different materials
+- Created `scripts/world/Chunk.cs` - Chunk node class
+  - 16x16x16 BlockType[,,] storage
+  - MeshInstance3D child for rendering
+  - FillTestData() creates terrain with a hole to verify face culling
+- Updated `scenes/main.tscn` with Camera3D, DirectionalLight3D, and Chunk node
+- Created `colonysim_3D.csproj` for C# build
+- **Build: 0 errors, 0 warnings**
+- **Runtime: Godot 4.6 runs scene successfully on RTX 3080**
+- **Winding order issue discovered and fixed:**
+  - Chunk appeared hollow - only back faces were rendering
+  - Root cause: vertex winding is counter-clockwise, Godot expects clockwise
+  - Initial workaround: CullMode.Front (caused lighting issues - normals pointed wrong way)
+  - **Proper fix:** Reversed triangle indices from `{ 0, 1, 2, 0, 2, 3 }` to `{ 0, 2, 1, 0, 3, 2 }`
+  - This keeps vertices as-is but changes winding order, so normals point outward correctly
+- Created `scripts/camera/OrbitCamera.cs` - Debug camera that orbits around a target point
 
 ---
 
