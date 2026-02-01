@@ -44,6 +44,11 @@ public partial class Chunk : Node3D
     private CollisionShape3D _collisionShape = null!;
 
     /// <summary>
+    /// NavigationRegion3D for per-chunk pathfinding.
+    /// </summary>
+    private NavigationRegion3D _navigationRegion = null!;
+
+    /// <summary>
     /// Flag indicating the mesh needs regeneration.
     /// </summary>
     private bool _isDirty = true;
@@ -53,6 +58,7 @@ public partial class Chunk : Node3D
         InitializeMaterials();
         InitializeMeshInstance();
         InitializeCollision();
+        InitializeNavigation();
 
         // World handles terrain generation via SetBlock() calls
         // Mesh will be generated when World calls ForceRegenerateMesh()
@@ -144,6 +150,33 @@ public partial class Chunk : Node3D
     }
 
     /// <summary>
+    /// Creates or finds the NavigationRegion3D node.
+    /// </summary>
+    private void InitializeNavigation()
+    {
+        // Check if we already have a NavigationRegion3D child (editor reload case)
+        foreach (var child in GetChildren())
+        {
+            if (child is NavigationRegion3D existingRegion)
+            {
+                _navigationRegion = existingRegion;
+                return;
+            }
+        }
+
+        // Create new NavigationRegion3D
+        _navigationRegion = new NavigationRegion3D();
+        _navigationRegion.Name = "ChunkNavigation";
+        AddChild(_navigationRegion);
+
+        // In editor, set owner so it saves with the scene
+        if (Engine.IsEditorHint())
+        {
+            _navigationRegion.Owner = GetTree().EditedSceneRoot;
+        }
+    }
+
+    /// <summary>
     /// Gets the block type at the specified local position.
     /// Returns Air if the position is out of bounds.
     /// </summary>
@@ -202,6 +235,9 @@ public partial class Chunk : Node3D
         // Regenerate collision to match the new mesh
         RegenerateCollision();
 
+        // Regenerate navigation to match the new terrain
+        RegenerateNavigation();
+
         _isDirty = false;
     }
 
@@ -259,6 +295,17 @@ public partial class Chunk : Node3D
         _collisionShape.Shape = shape;
 
         GD.Print($"Collision: {collisionVertices.Count / 3} triangles");
+    }
+
+    /// <summary>
+    /// Regenerates the chunk navigation mesh from block data.
+    /// </summary>
+    private void RegenerateNavigation()
+    {
+        var navMesh = ChunkNavigation.GenerateNavigationMesh(this);
+        _navigationRegion.NavigationMesh = navMesh;
+
+        GD.Print($"Navigation: {navMesh.GetPolygonCount()} walkable surfaces");
     }
 
     /// <summary>

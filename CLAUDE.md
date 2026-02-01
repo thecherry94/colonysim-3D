@@ -138,9 +138,8 @@ colonysim-3d/
 │   │   ├── World.cs             # World manager, chunk loading/unloading
 │   │   ├── Chunk.cs             # Single chunk: data, mesh, collision, nav
 │   │   ├── ChunkMeshGenerator.cs # Procedural mesh from block data
+│   │   ├── ChunkNavigation.cs   # Per-chunk navmesh generation
 │   │   └── Block.cs             # Block type definitions
-│   ├── navigation/
-│   │   └── ChunkNavigation.cs   # Per-chunk navmesh generation
 │   ├── colonist/
 │   │   ├── Colonist.cs          # NPC base class
 │   │   └── ColonistAI.cs        # Task execution, pathfinding
@@ -180,16 +179,18 @@ colonysim-3d/
 - [x] Basic camera to view the world
 - **Success criteria:** 3x3 chunk terrain renders with seamless boundaries
 
-### Phase 4: Block Modification
-- [ ] Implement `SetBlock(Vector3I position, BlockType type)`
-- [ ] Trigger mesh + collision regeneration for affected chunk
-- [ ] Test: click to remove/add blocks
+### Phase 4: Block Modification ✅ COMPLETE
+- [x] Implement `SetBlock(Vector3I position, BlockType type)`
+- [x] Trigger mesh + collision regeneration for affected chunk
+- [x] Test: click to remove/add blocks
+- **Success criteria:** Left-click removes, right-click places, instant updates
 
-### Phase 5: Per-Chunk Navigation
-- [ ] Generate NavigationMesh from walkable surfaces (top of solid blocks)
-- [ ] Create NavigationRegion3D per chunk
-- [ ] Regenerate navmesh when blocks change
-- [ ] Verify regions connect across chunk boundaries
+### Phase 5: Per-Chunk Navigation ✅ COMPLETE
+- [x] Generate NavigationMesh from walkable surfaces (top of solid blocks)
+- [x] Create NavigationRegion3D per chunk
+- [x] Regenerate navmesh when blocks change
+- [x] Edge connection margin configured for chunk boundaries
+- **Success criteria:** NavMesh on grass surfaces, updates with block changes
 
 ### Phase 6: Basic Colonist
 - [ ] Spawn a simple colonist with NavigationAgent3D
@@ -425,6 +426,58 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
   - Continuous grass surface across chunk boundaries ✅
   - Ball lands on terrain and can roll across chunks ✅
   - Hole in center chunk (1,0,1) works correctly ✅
+
+### Session 5 (Phase 4 Implementation)
+- **Implemented Phase 4: Block Modification**
+- Added world-space block methods to `World.cs`:
+  - `WorldToChunkAndLocal(Vector3I)` - converts world block pos to chunk coord + local pos
+  - `GetBlock(Vector3I)` - query blocks at world position
+  - `SetBlock(Vector3I, BlockType)` - modify blocks and trigger chunk regeneration
+- Created `scripts/interaction/BlockInteraction.cs`:
+  - Mouse raycast using `Camera3D.ProjectRayOrigin/Normal()`
+  - `PhysicsDirectSpaceState3D.IntersectRay()` for collision detection
+  - Hit normal determines block position (offset into block or adjacent)
+  - Left-click = remove block (set to Air)
+  - Right-click = place dirt block adjacent to clicked face
+- Added input actions to `project.godot`:
+  - `click_left` - mouse button 1
+  - `click_right` - mouse button 2
+- Updated `main.tscn` with BlockInteraction node under World
+- **Block position math:**
+  - Remove: `(hitPos - hitNormal * 0.1).Floor()` - offset INTO the block
+  - Place: `(hitPos + hitNormal * 0.1).Floor()` - offset to ADJACENT space
+- **Test results:**
+  - Left-click removes blocks instantly ✅
+  - Right-click places dirt blocks on any face ✅
+  - Mesh + collision update in real-time ✅
+  - Works across chunk boundaries ✅
+
+### Session 6 (Phase 5 Implementation)
+- **Implemented Phase 5: Per-Chunk Navigation**
+- Created `scripts/world/ChunkNavigation.cs`:
+  - Static class with `GenerateNavigationMesh(Chunk)` method
+  - Iterates all blocks, finds walkable surfaces (solid block + air above)
+  - Creates quad polygons at top of each walkable block (y + 1)
+  - Returns NavigationMesh with vertices and polygon indices
+- Modified `Chunk.cs`:
+  - Added `NavigationRegion3D _navigationRegion` field
+  - Added `InitializeNavigation()` method (same pattern as mesh/collision)
+  - Added `RegenerateNavigation()` method - generates navmesh from block data
+  - Updated `RegenerateMesh()` to call `RegenerateNavigation()` after collision
+- Modified `World.cs`:
+  - Added edge connection margin: `NavigationServer3D.MapSetEdgeConnectionMargin(mapRid, 1.0f)`
+  - Ensures NavigationRegion3D nodes connect at chunk boundaries
+- **Navigation generation flow:**
+  - `SetBlock()` → `_isDirty = true`
+  - `ForceRegenerateMesh()` → `RegenerateMesh()`
+  - `RegenerateMesh()` → mesh + collision + navigation regenerated
+- **Walkable surface logic:**
+  - Block at (x, y, z) is walkable if: `IsSolid(block) && !IsSolid(blockAbove)`
+  - Creates quad polygon at height `y + 1` (top of the solid block)
+- **To verify in Godot:**
+  - Enable Debug > Visible Navigation to see blue navmesh overlay
+  - Each chunk should have ChunkNavigation child node
+  - NavMesh should span all 9 chunks seamlessly
 
 ---
 

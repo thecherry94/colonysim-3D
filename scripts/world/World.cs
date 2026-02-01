@@ -18,6 +18,11 @@ public partial class World : Node3D
 
     public override void _Ready()
     {
+        // Configure navigation edge connection for chunk boundaries
+        // This allows NavigationRegion3D nodes to connect when edges are close enough
+        Rid mapRid = GetWorld3D().NavigationMap;
+        NavigationServer3D.MapSetEdgeConnectionMargin(mapRid, 1.0f);
+
         // Load 3x3 chunk area centered at (1, 0, 1)
         LoadChunkArea(new Vector3I(1, 0, 1), radius: 1);
     }
@@ -104,6 +109,53 @@ public partial class World : Node3D
             Mathf.FloorToInt(worldPos.Y / Chunk.SIZE),
             Mathf.FloorToInt(worldPos.Z / Chunk.SIZE)
         );
+    }
+
+    /// <summary>
+    /// Converts world block position to chunk coordinate and local position within chunk.
+    /// </summary>
+    public static (Vector3I chunkCoord, Vector3I localPos) WorldToChunkAndLocal(Vector3I worldBlockPos)
+    {
+        Vector3I chunkCoord = new Vector3I(
+            Mathf.FloorToInt((float)worldBlockPos.X / Chunk.SIZE),
+            Mathf.FloorToInt((float)worldBlockPos.Y / Chunk.SIZE),
+            Mathf.FloorToInt((float)worldBlockPos.Z / Chunk.SIZE)
+        );
+
+        // Handle negative coordinates properly with modulo
+        Vector3I localPos = new Vector3I(
+            ((worldBlockPos.X % Chunk.SIZE) + Chunk.SIZE) % Chunk.SIZE,
+            ((worldBlockPos.Y % Chunk.SIZE) + Chunk.SIZE) % Chunk.SIZE,
+            ((worldBlockPos.Z % Chunk.SIZE) + Chunk.SIZE) % Chunk.SIZE
+        );
+
+        return (chunkCoord, localPos);
+    }
+
+    /// <summary>
+    /// Gets block type at world block position.
+    /// </summary>
+    public BlockType GetBlock(Vector3I worldBlockPos)
+    {
+        var (chunkCoord, localPos) = WorldToChunkAndLocal(worldBlockPos);
+        var chunk = GetChunk(chunkCoord);
+        if (chunk == null)
+            return BlockType.Air;
+        return chunk.GetBlock(localPos.X, localPos.Y, localPos.Z);
+    }
+
+    /// <summary>
+    /// Sets block at world block position and regenerates affected chunk.
+    /// </summary>
+    public void SetBlock(Vector3I worldBlockPos, BlockType type)
+    {
+        var (chunkCoord, localPos) = WorldToChunkAndLocal(worldBlockPos);
+        var chunk = GetChunk(chunkCoord);
+        if (chunk == null)
+            return;
+
+        chunk.SetBlock(localPos.X, localPos.Y, localPos.Z, type);
+        chunk.ForceRegenerateMesh();
     }
 
     /// <summary>
