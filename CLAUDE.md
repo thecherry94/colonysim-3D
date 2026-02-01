@@ -192,15 +192,17 @@ colonysim-3d/
 - [x] Edge connection margin configured for chunk boundaries
 - **Success criteria:** NavMesh on grass surfaces, updates with block changes
 
-### Phase 6: Basic Colonist
-- [ ] Spawn a simple colonist with NavigationAgent3D
-- [ ] Click to set destination, colonist pathfinds and walks there
-- [ ] Handle navigation across chunk boundaries
+### Phase 6: Basic Colonist ✅ COMPLETE
+- [x] Spawn a simple colonist with NavigationAgent3D
+- [x] Click to set destination, colonist pathfinds and walks there
+- [x] Handle navigation across chunk boundaries
+- **Success criteria:** Right-click moves colonist, pathfinds across chunks
 
-### Phase 7: World Generation
-- [ ] Implement simple noise-based terrain generation
-- [ ] Replace hardcoded blocks with procedural generation
-- [ ] Basic biome or height variation
+### Phase 7: World Generation ✅ COMPLETE
+- [x] Implement simple noise-based terrain generation
+- [x] Replace hardcoded blocks with procedural generation
+- [x] Basic height variation using FastNoiseLite
+- **Success criteria:** Rolling hills, seamless chunk boundaries
 
 ---
 
@@ -478,6 +480,61 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
   - Enable Debug > Visible Navigation to see blue navmesh overlay
   - Each chunk should have ChunkNavigation child node
   - NavMesh should span all 9 chunks seamlessly
+
+### Session 7 (Phase 6 Implementation)
+- **Implemented Phase 6: Basic Colonist**
+- Created `scripts/colonist/Colonist.cs`:
+  - `CharacterBody3D` with `NavigationAgent3D` integration
+  - `MovementSpeed` export property (default 5.0 units/sec)
+  - `SetDestination(Vector3)` method sets navigation target
+  - `_PhysicsProcess` moves colonist along path using `MoveAndSlide()`
+  - `OnTargetReached()` callback logs arrival
+- Created `scenes/colonist/Colonist.tscn`:
+  - CharacterBody3D root node in "colonists" group
+  - CapsuleShape3D for collision (radius=0.3, height=1.6)
+  - CapsuleMesh with blue material for visibility
+  - NavigationAgent3D with path/target distance = 0.5
+- Modified `scripts/interaction/BlockInteraction.cs`:
+  - Added `_selectedColonist` field for colonist reference
+  - Added `FindColonist()` deferred method (waits for scene tree)
+  - Right-click now moves colonist instead of placing blocks
+  - Left-click still removes blocks
+- Updated `scenes/main.tscn`:
+  - Added Colonist scene instance at (24.5, 7, 24.5)
+- **Controls:**
+  - Left-click = Remove block
+  - Right-click = Move colonist to clicked location
+- **Test results:**
+  - Blue capsule colonist spawns on grass ✅
+  - Right-click moves colonist to target ✅
+  - Pathfinding works across chunk boundaries ✅
+  - Console shows movement/arrival messages ✅
+
+### Session 8 (Phase 7 Implementation)
+- **Implemented Phase 7: World Generation**
+- Created `scripts/world/TerrainGenerator.cs`:
+  - Static class using FastNoiseLite for noise generation
+  - `GetHeight(worldX, worldZ)` - returns terrain height at position
+  - `GetBlockType(worldX, worldY, worldZ)` - returns block type based on height
+  - Parameters: BaseHeight=2, HeightVariation=10, StoneDepth=3
+  - Noise settings: SimplexSmooth, Frequency=0.05, 4 octaves, Seed=12345
+- Modified `scripts/world/World.cs`:
+  - Replaced hardcoded `GenerateChunkTerrain()` with noise-based generation
+  - Uses world coordinates for noise sampling (seamless chunk boundaries)
+  - Removed test hole (no longer needed)
+- **Terrain generation logic:**
+  - Height = BaseHeight + (normalized_noise * HeightVariation) → 2-12 blocks
+  - Y >= surfaceHeight: Air
+  - Y == surfaceHeight - 1: Grass
+  - Y >= surfaceHeight - 3: Dirt
+  - Y < surfaceHeight - 3: Stone
+- **Test results:**
+  - Terrain has hills and valleys ✅
+  - Grass/dirt/stone layers work correctly ✅
+  - Chunk boundaries are seamless ✅
+  - Navigation mesh follows terrain contours ✅
+  - Colonist pathfinding works on varied terrain ✅
+  - Screenshot confirmed: rolling hills with proper layers visible
 
 ---
 

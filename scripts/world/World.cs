@@ -159,36 +159,31 @@ public partial class World : Node3D
     }
 
     /// <summary>
-    /// Generates simple terrain for a chunk.
+    /// Generates terrain for a chunk using procedural noise.
     /// </summary>
     private void GenerateChunkTerrain(Chunk chunk, Vector3I chunkCoord)
     {
-        // Simple flat terrain: stone, dirt, grass layers
+        // Calculate world offset for this chunk
+        int worldOffsetX = chunkCoord.X * Chunk.SIZE;
+        int worldOffsetZ = chunkCoord.Z * Chunk.SIZE;
+
         for (int x = 0; x < Chunk.SIZE; x++)
         {
             for (int z = 0; z < Chunk.SIZE; z++)
             {
-                // Layers 0-3: Stone
-                for (int y = 0; y < 4; y++)
-                    chunk.SetBlock(x, y, z, BlockType.Stone);
+                // Convert to world coordinates for noise sampling
+                int worldX = worldOffsetX + x;
+                int worldZ = worldOffsetZ + z;
 
-                // Layer 4: Dirt
-                chunk.SetBlock(x, 4, z, BlockType.Dirt);
-
-                // Layer 5: Grass
-                chunk.SetBlock(x, 5, z, BlockType.Grass);
+                for (int y = 0; y < Chunk.SIZE; y++)
+                {
+                    BlockType blockType = TerrainGenerator.GetBlockType(worldX, y, worldZ);
+                    chunk.SetBlock(x, y, z, blockType);
+                }
             }
         }
 
-        // Add a hole in the center chunk only (for testing)
-        if (chunkCoord == new Vector3I(1, 0, 1))
-        {
-            chunk.SetBlock(8, 5, 8, BlockType.Air);
-            chunk.SetBlock(8, 4, 8, BlockType.Air);
-            chunk.SetBlock(8, 3, 8, BlockType.Air);
-        }
-
-        // Force mesh regeneration after terrain generation
+        // Generate mesh, collision, and navigation
         chunk.ForceRegenerateMesh();
     }
 }
