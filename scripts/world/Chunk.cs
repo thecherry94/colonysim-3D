@@ -54,11 +54,8 @@ public partial class Chunk : Node3D
         InitializeMeshInstance();
         InitializeCollision();
 
-        // For testing: fill with some blocks
-        FillTestData();
-
-        // Generate initial mesh and collision
-        RegenerateMesh();
+        // World handles terrain generation via SetBlock() calls
+        // Mesh will be generated when World calls ForceRegenerateMesh()
     }
 
     /// <summary>
@@ -206,6 +203,16 @@ public partial class Chunk : Node3D
         RegenerateCollision();
 
         _isDirty = false;
+    }
+
+    /// <summary>
+    /// Forces mesh regeneration regardless of dirty flag.
+    /// Called by World after terrain generation.
+    /// </summary>
+    public void ForceRegenerateMesh()
+    {
+        _isDirty = true;
+        RegenerateMesh();
     }
 
     /// <summary>

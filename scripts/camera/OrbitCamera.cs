@@ -11,13 +11,13 @@ public partial class OrbitCamera : Camera3D
     /// The point to orbit around.
     /// </summary>
     [Export]
-    public Vector3 Target { get; set; } = new Vector3(8, 3, 8);
+    public Vector3 Target { get; set; } = new Vector3(24, 6, 24);
 
     /// <summary>
     /// Distance from the target.
     /// </summary>
     [Export]
-    public float Distance { get; set; } = 25f;
+    public float Distance { get; set; } = 60f;
 
     /// <summary>
     /// Rotation speed in radians per second.
