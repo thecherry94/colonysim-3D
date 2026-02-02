@@ -14,7 +14,8 @@
       "mcp__godot__get_godot_version",
       "mcp__godot__run_project",
       "mcp__godot__get_debug_output",
-      "mcp__godot__stop_project"
+      "mcp__godot__stop_project",
+      "WebFetch(domain:docs.godotengine.org)"
     ]
   }
 }

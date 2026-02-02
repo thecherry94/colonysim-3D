@@ -20,8 +20,9 @@ public partial class World : Node3D
     {
         // Configure navigation edge connection for chunk boundaries
         // This allows NavigationRegion3D nodes to connect when edges are close enough
+        // Keep this small (0.2) to connect chunk boundaries but NOT bridge 1-block gaps
         Rid mapRid = GetWorld3D().NavigationMap;
-        NavigationServer3D.MapSetEdgeConnectionMargin(mapRid, 1.0f);
+        NavigationServer3D.MapSetEdgeConnectionMargin(mapRid, 0.2f);
 
         // Load 3x3 chunk area centered at (1, 0, 1)
         LoadChunkArea(new Vector3I(1, 0, 1), radius: 1);

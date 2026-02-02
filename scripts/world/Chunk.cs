@@ -338,7 +338,7 @@ public partial class Chunk : Node3D
             link.StartPosition = heightLink.LowerPosition;
             link.EndPosition = heightLink.UpperPosition;
             link.Bidirectional = true;
-            link.EnterCost = 0.5f;  // Slight cost to prefer flat paths
+            link.EnterCost = 1.0f;   // Same as flat travel (robust jumping makes vertical traversal reliable)
             link.TravelCost = 1.0f;
             AddChild(link);
             _navigationLinks.Add(link);

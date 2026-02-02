@@ -28,4 +28,10 @@ surface_material_override/0 = SubResource("StandardMaterial3D_colonist")
 [node name="NavigationAgent3D" type="NavigationAgent3D" parent="."]
 path_desired_distance = 0.5
 target_desired_distance = 0.5
+path_max_distance = 3.0
+simplify_path = true
+simplify_epsilon = 0.5
+radius = 0.4
+height = 1.6
 avoidance_enabled = false
+debug_enabled = true

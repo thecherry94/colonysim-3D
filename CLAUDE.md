@@ -175,20 +175,149 @@ colonysim-3d/
 
 ## 7. Feature Enhancements
 
-### Height Traversal (1-Block Jumping) ✅ COMPLETE
+### Height Traversal (1-Block Jumping) ⚠️ PARTIAL
 - [x] NavigationLink3D connects walkable surfaces at different heights
 - [x] Colonist has gravity and jump physics
-- [x] `LinkReached` signal triggers jump when going up
-- [x] Falling down handled by gravity (no jump needed)
-- **How it works:**
-  - `ChunkNavigation.FindHeightLinks()` detects adjacent blocks with 1-block height difference
-  - `Chunk.RegenerateNavigationLinks()` creates bidirectional NavigationLink3D nodes
-  - `Colonist.OnLinkReached()` triggers `_shouldJump = true` when going up
-  - Horizontal momentum continues during jump → parabolic arc to upper platform
+- [x] State machine for movement (Idle, Walking, PreparingJump, Jumping, Landing)
+- [x] Path lookahead to detect jumps ahead of time
+- [x] Physics-based ballistic trajectory calculation
+- [x] Successful jumps work on simple terrain
+- [ ] **Unreliable on complex terrain** - Gets stuck in corners, edges, holes
+- [ ] **Multi-level traversal fails** - Can't climb more than 1-2 blocks reliably
+
+**Current Implementation:**
+- `ChunkNavigation.FindHeightLinks()` - Detects adjacent blocks with 1-block height difference
+- `Chunk.RegenerateNavigationLinks()` - Creates bidirectional NavigationLink3D nodes
+- `Colonist.DetectUpcomingJump()` - Scans navigation path waypoints for height transitions
+- `Colonist.CalculateJumpVelocity()` - Physics-based parabolic arc calculation
+- State machine manages movement phases from detection to landing
+
+**Known Issues:**
+- Waypoints don't align with block edges where jumps should happen
+- Navigation path is approximate, not block-precise
+- Gets stuck when target requires multiple height transitions
+- Failed jumps land at same position, causing infinite retry loops
 
 ---
 
-## 8. Future Development Roadmap
+## 8. Navigation Lessons Learned (CRITICAL INSIGHTS)
+
+### 8.1 The Fundamental Problem
+
+**NavigationAgent3D + NavigationLink3D were NOT designed for voxel terrain.**
+
+These systems work well for smooth 3D terrain (like platformers with hills and ramps), but fail on discrete block-based worlds like Minecraft/Rimworld/Dwarf Fortress.
+
+### 8.2 Why It Fails
+
+**1. Waypoints vs Block Edges**
+- NavigationAgent waypoints are pathfinding guides, not physical positions
+- Waypoints float in space and don't align with block edges
+- Jump detection from waypoints is unreliable - colonist might be 0.5 units away from actual edge
+
+**2. Approximation vs Precision**
+- NavigationMesh creates approximate walkable surfaces
+- NavigationLinks connect surfaces but don't guarantee precise positioning
+- Voxel games need exact block coordinates (X.0, Y.0, Z.0), not approximate positions
+
+**3. Height Transitions**
+- NavigationLink fires `LinkReached` signal too late (after agent already there)
+- No built-in way to know when to prepare for a jump
+- Path lookahead helps but still relies on imprecise waypoints
+
+**4. Complex Geometry**
+- Gets stuck in corners and around convex edges
+- Can't reliably navigate into/out of holes (1-block depressions)
+- Fails on terrain requiring multiple successive jumps
+- NavigationAgent parameters (AgentRadius, path simplification) help but don't solve root issue
+
+### 8.3 What We Tried
+
+**Attempt 1: Direct NavigationLink usage**
+- Result: Jumps only when reaching link (too late)
+- Problem: No preparation time, colonist at wrong position
+
+**Attempt 2: Path lookahead + State machine**
+- Added: DetectUpcomingJump() scans waypoints 2 units ahead
+- Added: MovementState enum (Idle, Walking, PreparingJump, Jumping, Landing)
+- Added: Physics-based trajectory calculation
+- Result: Works on simple terrain, fails on complex geometry
+- Problem: Waypoints still don't match actual block edges
+
+**Attempt 3: Tuning parameters**
+- AgentRadius: 0.3 → 0.4 (keeps colonist further from edges)
+- Path simplification: enabled (reduces corner-cutting)
+- Launch alignment tolerance: 0.1 units (precise positioning)
+- Minimum horizontal velocity: 4.0 units/sec (edge clearance)
+- Result: Marginal improvement, still "giga-jank"
+
+**Attempt 4: Success-based cooldown**
+- Only cooldown after successful jumps (height gain > 0.5m)
+- Clear cooldown on failed jumps to allow retries
+- Result: Prevents some stuck states, but colonist still stuck on complex paths
+
+### 8.4 The Industry Standard (For Voxel Colony Sims)
+
+**Rimworld / Dwarf Fortress / Prison Architect approach:**
+
+1. **Custom Grid-Based A* Pathfinding**
+   - Pathfinding directly on voxel grid (3D array of blocks)
+   - Each block is a node with exact integer coordinates
+   - Movement cost per block type (floor=1, difficult terrain=2, etc.)
+   - Height transitions detected from block geometry, not navigation waypoints
+
+2. **Block-Aware Movement Controller**
+   - Move along exact block edges, not smooth curves
+   - Snap to block centers for precise positioning
+   - Jump triggers when reaching block edge and height delta detected
+   - No reliance on NavigationAgent3D or NavigationLink3D
+
+3. **Direct Geometry Analysis**
+   - Check if block above is walkable
+   - Check if adjacent block is 1 unit higher (can jump)
+   - Check if path requires ladder/stairs (2+ height difference)
+   - All decisions made from block data, not navigation waypoints
+
+**Why this works:**
+- Exact block coordinates guarantee precision
+- No waypoint approximation
+- Jump detection happens at the right place (block edge)
+- Can handle arbitrary terrain complexity
+
+### 8.5 References
+
+**Research conducted:**
+- [Godot_3D_Navigation_Jump_Links GitHub](https://github.com/smix8/Godot_3D_Navigation_Jump_Links) - Custom jump paths
+- [NavigationAgent link_reached signal issues](https://github.com/godotengine/godot-proposals/discussions/6167)
+- Godot NavigationAgent3D documentation
+- CharacterBody3D best practices
+
+**Key finding:** NavigationLink3D provides pathfinding connections, but jump movement must be fully custom and physics-based. Even then, it's unreliable for voxel terrain.
+
+### 8.6 Next Steps (Future Work)
+
+**Option 1: Custom Voxel Pathfinding** (RECOMMENDED)
+- Implement grid-based A* directly on block array
+- Calculate path as list of exact block positions
+- Move colonist block-by-block
+- Detect jumps from block geometry
+- Works like Rimworld/Dwarf Fortress
+
+**Option 2: Hybrid Approach**
+- Keep NavigationAgent3D for flat terrain
+- Override with custom logic for height transitions
+- Still janky but might be "good enough"
+
+**Option 3: Simplify Terrain**
+- Remove holes and complex geometry
+- Smooth terrain makes NavigationAgent work better
+- Not suitable for true voxel colony sim
+
+**Decision pending:** Will implement Option 1 (custom voxel pathfinding) when ready to properly solve this. Current NavigationAgent approach is a learning exercise but fundamentally limited.
+
+---
+
+## 9. Future Development Roadmap
 
 ### World & Terrain
 - [ ] **More Block Types** - Wood, ore, sand, water, etc.
@@ -214,7 +343,7 @@ colonysim-3d/
 
 ---
 
-## 9. Key Godot API Reference (C#)
+## 10. Key Godot API Reference (C#)
 
 ### Procedural Mesh Generation
 
@@ -294,7 +423,7 @@ Vector3 topNormal = Vector3.Up;
 
 ---
 
-## 10. Known Gotchas & Warnings
+## 11. Known Gotchas & Warnings
 
 1. **Navigation sync delay**
    - NavMesh changes don't apply until next physics frame
@@ -334,7 +463,7 @@ Vector3 topNormal = Vector3.Up;
 
 ---
 
-## 11. Documentation References
+## 12. Documentation References
 
 All Godot 4.6 docs are available locally at:
 ```
@@ -355,11 +484,11 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
 
 ---
 
-## 12. Godot MCP Server Integration
+## 13. Godot MCP Server Integration
 
 **Available:** Godot MCP server is available and provides specialized tools for Godot project management.
 
-### 12.1 When to Use MCP vs Default Tools
+### 13.1 When to Use MCP vs Default Tools
 
 **Use Godot MCP Server for:**
 - **Project management operations** - Version checks, project info, listing projects
@@ -378,7 +507,7 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
 - **Documentation** - Reading/writing markdown files
 - **Quick file searches** - Glob/Grep for finding files and code
 
-### 12.2 Available MCP Functions
+### 13.2 Available MCP Functions
 
 | Function | Use Case | Example |
 |----------|----------|---------|
@@ -397,7 +526,7 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
 | `get_uid` | Get file UID (Godot 4.4+) | Reference tracking |
 | `update_project_uids` | Resave resources with UIDs | Fix reference issues |
 
-### 12.3 Recommended Workflow
+### 13.3 Recommended Workflow
 
 **For testing changes:**
 ```
@@ -421,7 +550,7 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
 2. Use `get_godot_version` to confirm Godot installation
 ```
 
-### 12.4 Testing Protocol
+### 13.4 Testing Protocol
 
 When implementing or modifying features:
 
@@ -440,7 +569,7 @@ When implementing or modifying features:
    - Better for node positioning and visual debugging
    - Return to code editing after visual adjustments
 
-### 12.5 Current Project Path
+### 13.5 Current Project Path
 
 ```
 C:\hobbies\Godot\colonysim-3D
@@ -448,7 +577,7 @@ C:\hobbies\Godot\colonysim-3D
 
 All MCP functions should use this as the `projectPath` parameter.
 
-### 12.6 Debugging & Logging Strategy
+### 13.6 Debugging & Logging Strategy
 
 **Progressive approach - escalate strategically:**
 
@@ -494,7 +623,7 @@ All MCP functions should use this as the `projectPath` parameter.
 
 ---
 
-## 13. Session Notes
+## 14. Session Notes
 
 *Use this section to log important decisions or discoveries during development sessions.*
 
@@ -739,6 +868,41 @@ All MCP functions should use this as the `projectPath` parameter.
   - Edge-of-screen panning
   - World bounds (prevent camera leaving world)
   - Follow mode (auto-center on selected colonist)
+
+### Session 11 (Navigation System Deep Dive)
+- **Attempted comprehensive navigation improvements**
+- **Modified** `scripts/colonist/Colonist.cs`:
+  - Implemented full state machine (MovementState enum: Idle, Walking, PreparingJump, Jumping, Landing)
+  - Added JumpPlan class for trajectory planning
+  - Implemented path lookahead with `GetNavigationPath()` and `DetectUpcomingJump()`
+  - Physics-based ballistic trajectory calculation in `CalculateJumpVelocity()`
+  - Success-based cooldown system (only cooldown after height gain > 0.5m)
+  - Minimum horizontal velocity (4.0 units/sec) for edge clearance
+  - Height validation before finishing navigation
+  - Fixed path distance calculation bug (first segment was always "0.00m ahead")
+- **Modified** `scripts/world/ChunkNavigation.cs`:
+  - Increased AgentRadius from 0.3f to 0.4f (keeps colonist further from edges)
+  - Adjusted NavigationLink positioning (lower at 0.5, upper at 0.4/0.6 offsets)
+- **Modified** `scripts/world/Chunk.cs`:
+  - Updated NavigationLink costs (EnterCost = 1.0f, don't penalize vertical movement)
+- **Updated** `scenes/colonist/Colonist.tscn`:
+  - Set path_desired_distance = 0.5 (balance between precision and reliability)
+  - Set target_desired_distance = 0.5
+  - Enabled path simplification (simplify_epsilon = 0.5)
+  - Set NavigationAgent radius = 0.4 (match ChunkNavigation)
+- **Test results:**
+  - Works on simple terrain (flat → 1 block up)
+  - Successfully completed several navigation paths with jumps
+  - Fails on complex terrain (corners, edges, holes)
+  - Gets stuck when path requires multiple successive jumps
+  - Final position: stuck at Y=5 trying to reach Y=9 (4 blocks higher)
+- **Critical realization: NavigationAgent3D is fundamentally wrong tool for voxel terrain**
+  - Waypoints don't align with block edges
+  - Navigation path is approximate, not block-precise
+  - NavigationLinks provide pathfinding connections but not precise positioning
+  - Industry standard (Rimworld/Dwarf Fortress): custom grid-based A* pathfinding
+- **Decision:** Keep current implementation as learning exercise, but will implement custom voxel pathfinding in the future
+- **Documented:** Section 8 "Navigation Lessons Learned" with all insights, research references, and future direction
 
 ---
 

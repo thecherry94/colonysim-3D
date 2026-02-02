@@ -27,6 +27,14 @@ public static class ChunkNavigation
     public static NavigationMesh GenerateNavigationMesh(Chunk chunk)
     {
         var navMesh = new NavigationMesh();
+
+        // Configure navmesh for colonist agent size
+        // AgentRadius controls distance from edges - 0.4 keeps colonist safer from corners
+        navMesh.AgentRadius = 0.4f;  // Increased from 0.3 to keep agent further from edges
+        navMesh.AgentHeight = 1.8f;  // Slightly taller than capsule (1.6) for clearance
+        navMesh.CellSize = 0.25f;    // Match world NavigationMap default
+        navMesh.CellHeight = 0.25f;  // Match world NavigationMap default
+
         var vertices = new List<Vector3>();
         var polygons = new List<int[]>();
 
@@ -119,11 +127,23 @@ public static class ChunkNavigation
         // Neighbor must be solid with air above (walkable at y+1)
         if (BlockData.IsSolid(neighborBlock) && !BlockData.IsSolid(neighborAbove))
         {
-            // Found height transition: walkable at (x, y+1, z) connects to walkable at (nx, ny+1, nz)
+            // Keep lower position at block center for consistent launch point
+            // Upper position offset slightly for navmesh connection
+            float lowerX = x + 0.5f;
+            float lowerZ = z + 0.5f;
+            float upperX = nx + 0.5f;
+            float upperZ = nz + 0.5f;
+
+            // Offset upper position toward connection (lighter offset for better alignment)
+            if (nx > x) { upperX = nx + 0.4f; }      // +X: offset upper toward +X
+            else if (nx < x) { upperX = nx + 0.6f; } // -X: offset upper toward -X (symmetry)
+            else if (nz > z) { upperZ = nz + 0.4f; } // +Z: offset upper toward +Z
+            else if (nz < z) { upperZ = nz + 0.6f; } // -Z: offset upper toward -Z
+
             links.Add(new HeightLink
             {
-                LowerPosition = new Vector3(x + 0.5f, y + 1, z + 0.5f),
-                UpperPosition = new Vector3(nx + 0.5f, ny + 1, nz + 0.5f)
+                LowerPosition = new Vector3(lowerX, y + 1.0f, lowerZ),
+                UpperPosition = new Vector3(upperX, ny + 1.0f, upperZ)
             });
         }
     }
