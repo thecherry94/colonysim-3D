@@ -214,7 +214,7 @@ colonysim-3d/
 
 ---
 
-## 7. Key Godot API Reference (C#)
+## 9. Key Godot API Reference (C#)
 
 ### Procedural Mesh Generation
 
@@ -294,7 +294,7 @@ Vector3 topNormal = Vector3.Up;
 
 ---
 
-## 8. Known Gotchas & Warnings
+## 10. Known Gotchas & Warnings
 
 1. **Navigation sync delay**
    - NavMesh changes don't apply until next physics frame
@@ -329,7 +329,7 @@ Vector3 topNormal = Vector3.Up;
 
 ---
 
-## 9. Documentation References
+## 11. Documentation References
 
 All Godot 4.6 docs are available locally at:
 ```
@@ -350,7 +350,369 @@ E:\hobbies\programming\godot\colonysim-3d\godot-docs-master\
 
 ---
 
-## 10. Session Notes
+## 12. Godot MCP Server Integration
+
+**Available:** Godot MCP server is available and provides specialized tools for Godot project management.
+
+### 12.1 When to Use MCP vs Default Tools
+
+**Use Godot MCP Server for:**
+- **Project management operations** - Version checks, project info, listing projects
+- **Running/testing the game** - `run_project`, `stop_project`, `get_debug_output`
+- **Scene file operations** - Creating new scenes, adding nodes, saving scenes
+- **Visual assets** - Loading sprites into Sprite2D nodes
+- **Editor operations** - Launching Godot editor for the project
+- **Complex scene editing** - When you need to work with scene structure programmatically
+
+**Use Default Tools (Read/Write/Edit) for:**
+- **C# script files** - Always use Read/Edit/Write for .cs files
+  - MCP server doesn't handle C# script logic
+  - Direct file editing gives better control and context
+- **Configuration files** - project.godot, .csproj, etc.
+- **Reading scene files** - Use Read to examine .tscn structure
+- **Documentation** - Reading/writing markdown files
+- **Quick file searches** - Glob/Grep for finding files and code
+
+### 12.2 Available MCP Functions
+
+| Function | Use Case | Example |
+|----------|----------|---------|
+| `get_godot_version` | Verify Godot installation | Check if 4.6 is available |
+| `list_projects` | Find Godot projects in directories | Scan for project.godot files |
+| `get_project_info` | Get metadata about this project | Check Godot version, renderer |
+| `launch_editor` | Open project in Godot editor | Visual editing session |
+| `run_project` | Execute the game | Test gameplay changes |
+| `stop_project` | Terminate running game | Stop after testing |
+| `get_debug_output` | Capture console output | Review errors/warnings |
+| `create_scene` | Generate new .tscn files | Create new game objects |
+| `add_node` | Add nodes to existing scenes | Build scene hierarchy |
+| `load_sprite` | Assign textures to Sprite2D | Add visual assets |
+| `save_scene` | Persist scene changes | Save after modifications |
+| `export_mesh_library` | Convert scenes to MeshLibrary | For GridMap usage (if needed) |
+| `get_uid` | Get file UID (Godot 4.4+) | Reference tracking |
+| `update_project_uids` | Resave resources with UIDs | Fix reference issues |
+
+### 12.3 Recommended Workflow
+
+**For testing changes:**
+```
+1. Edit C# scripts with Read/Edit/Write tools
+2. Use `run_project` to launch the game
+3. Use `get_debug_output` to check for errors
+4. Use `stop_project` when done testing
+```
+
+**For scene modifications:**
+```
+1. Read .tscn file to understand structure
+2. Either:
+   a) Edit .tscn directly with Edit tool (for simple property changes)
+   b) Use MCP `add_node`/`save_scene` (for complex structural changes)
+```
+
+**For project information:**
+```
+1. Use `get_project_info` to verify project configuration
+2. Use `get_godot_version` to confirm Godot installation
+```
+
+### 12.4 Testing Protocol
+
+When implementing or modifying features:
+
+1. **Always test in-engine after code changes**
+   - Use `run_project` to verify behavior
+   - Check `get_debug_output` for errors/warnings
+   - Don't assume code works without runtime verification
+
+2. **Prefer running over reading debug output**
+   - Running provides immediate visual feedback
+   - Debug output is good for diagnosing issues
+   - Stop cleanly with `stop_project` before making more changes
+
+3. **Use editor for complex visual work**
+   - Launch with `launch_editor` for materials, lighting, particle effects
+   - Better for node positioning and visual debugging
+   - Return to code editing after visual adjustments
+
+### 12.5 Current Project Path
+
+```
+C:\hobbies\Godot\colonysim-3D
+```
+
+All MCP functions should use this as the `projectPath` parameter.
+
+### 12.6 Debugging & Logging Strategy
+
+**Progressive debugging approach - escalate strategically, not randomly.**
+
+#### Level 0: Basic Development Logging
+
+**Normal development logging is fine and encouraged:**
+
+```csharp
+// ✅ GOOD: Basic operation logging during development
+public void SetDestination(Vector3 target)
+{
+    GD.Print($"[Colonist] Setting destination: {target}");
+    _navigationAgent.TargetPosition = target;
+}
+
+// ✅ GOOD: Log important state changes
+public void SetBlock(Vector3I worldPos, BlockType blockType)
+{
+    GD.Print($"[World] SetBlock at {worldPos}: {blockType}");
+    // ... set block logic ...
+}
+
+// ✅ GOOD: Log key events
+private void OnTargetReached()
+{
+    GD.Print("[Colonist] Target reached");
+}
+```
+
+**When debugging, start here:**
+1. Run with `run_project` and observe behavior
+2. Check `get_debug_output` for existing logs and errors
+3. Read the relevant code carefully
+4. Check for common issues:
+   - Null references (uninitialized nodes)
+   - Wrong coordinate systems (world vs local vs chunk)
+   - Missing awaits (navigation sync, physics frames)
+   - Incorrect node paths or scene structure
+
+**If existing logs aren't enough, escalate to Level 1.**
+
+#### Level 1: Targeted Diagnostic Logging
+
+**If existing logs aren't enough, add TARGETED logs at specific decision points:**
+
+```csharp
+// ✅ GOOD: Add conditional branch logging
+private void RegenerateMesh()
+{
+    if (!_isDirty)
+    {
+        GD.Print($"[Chunk {ChunkCoord}] Skipping regeneration - not dirty");  // ADD THIS
+        return;
+    }
+    GD.Print($"[Chunk {ChunkCoord}] Regenerating mesh with {_blocks.Length} blocks");
+    // ... mesh generation ...
+}
+
+// ✅ GOOD: Add intermediate calculation logging
+public Vector3I WorldToChunkCoord(Vector3I worldPos)
+{
+    var result = new Vector3I(
+        Mathf.FloorToInt(worldPos.X / 16f),
+        Mathf.FloorToInt(worldPos.Y / 16f),
+        Mathf.FloorToInt(worldPos.Z / 16f)
+    );
+    GD.Print($"[World] WorldToChunkCoord: {worldPos} → {result}");  // ADD THIS
+    return result;
+}
+
+// ❌ BAD: Panic logging hot paths
+public void _Process(double delta)
+{
+    GD.Print($"Process called delta={delta}"); // Called 60x per second!
+    // ...
+}
+```
+
+**Strategic log locations:**
+- Method entry points with parameters
+- State changes (dirty flags, mode switches)
+- Conditional branches (which path was taken?)
+- Return values from important calculations
+- Before/after critical operations (mesh regeneration, pathfinding)
+
+**When to use:**
+- Function is being called but producing wrong results
+- Need to verify which code path executes
+- Need to see parameter values at runtime
+
+#### Level 2: Data Flow Tracking
+
+**For nasty bugs, add logs to trace data through the system:**
+
+```csharp
+// ✅ GOOD: Track coordinate transformations
+public Vector3I WorldToChunkAndLocal(Vector3I worldPos, out Vector3I localPos)
+{
+    var chunkCoord = new Vector3I(
+        Mathf.FloorToInt(worldPos.X / 16f),
+        Mathf.FloorToInt(worldPos.Y / 16f),
+        Mathf.FloorToInt(worldPos.Z / 16f)
+    );
+    localPos = worldPos - chunkCoord * 16;
+
+    GD.Print($"[World] WorldPos {worldPos} → Chunk {chunkCoord}, Local {localPos}");
+    return chunkCoord;
+}
+
+// ✅ GOOD: Track navmesh generation
+var walkableSurfaces = FindWalkableSurfaces();
+GD.Print($"[ChunkNav] Found {walkableSurfaces.Count} walkable surfaces");
+
+var navMesh = GenerateNavigationMesh(walkableSurfaces);
+GD.Print($"[ChunkNav] Generated navmesh: {navMesh.Vertices.Length} vertices, " +
+         $"{navMesh.GetPolygonCount()} polygons");
+```
+
+**When to use:**
+- Data is being transformed incorrectly
+- Need to verify calculations at multiple stages
+- Tracking objects through complex systems (block coords → world → chunk → local)
+
+#### Level 3: Deep Inspection
+
+**For truly nasty bugs, add detailed state dumps:**
+
+```csharp
+// ✅ GOOD: Comprehensive state logging
+private void DebugDumpChunkState()
+{
+    GD.Print($"=== Chunk {ChunkCoord} State ===");
+    GD.Print($"  IsDirty: {_isDirty}");
+    GD.Print($"  MeshInstance: {_meshInstance != null}");
+    GD.Print($"  CollisionShape: {_collisionShape != null}");
+    GD.Print($"  NavigationRegion: {_navigationRegion != null}");
+    GD.Print($"  NavigationLinks: {_navigationLinks.Count}");
+
+    int solidBlocks = 0;
+    for (int x = 0; x < 16; x++)
+        for (int y = 0; y < 16; y++)
+            for (int z = 0; z < 16; z++)
+                if (Block.IsSolid(_blocks[x, y, z])) solidBlocks++;
+
+    GD.Print($"  Solid blocks: {solidBlocks} / {16*16*16}");
+    GD.Print($"========================");
+}
+
+// Call only when needed, not every frame
+if (GD.Print("regenerate failed"))
+    DebugDumpChunkState();
+```
+
+**When to use:**
+- System state is corrupted or inconsistent
+- Need to verify multiple related values at once
+- Bug appears intermittently and need full context when it occurs
+
+#### Godot Logging Tools
+
+```csharp
+// Standard output (shows in Output panel)
+GD.Print("Info message");
+GD.Print($"Formatted: {value}");
+
+// Warnings (yellow in console)
+GD.PushWarning("This shouldn't happen but isn't fatal");
+
+// Errors (red in console, includes stack trace)
+GD.PushError("Critical problem detected");
+
+// Assertions (only in debug builds)
+Debug.Assert(condition, "Condition should be true here");
+```
+
+#### Using get_debug_output
+
+After running with logs:
+```
+1. Use `run_project` to start the game
+2. Reproduce the bug
+3. Use `get_debug_output` to capture console output
+4. Analyze the log sequence to find the issue
+5. Use `stop_project` when done
+```
+
+**What to look for in debug output:**
+- Error messages (red) - immediate problems
+- Warning messages (yellow) - potential issues
+- Missing log messages - code not executing as expected
+- Unexpected log sequences - wrong execution order
+- Repeated messages - infinite loops or excessive calls
+
+#### Best Practices
+
+**DO:**
+- ✅ Add context to logs: `[Colonist]`, `[Chunk (1,0,1)]`, `[World]`
+- ✅ Log meaningful data: coordinates, counts, state changes
+- ✅ Use descriptive messages: "Setting destination to {pos}" not "pos={pos}"
+- ✅ Keep basic logging for key operations (helps with future debugging)
+- ✅ Remove or comment out detailed diagnostic logs once bug is fixed
+- ✅ Use PushError for serious problems, PushWarning for concerns
+
+**DON'T:**
+- ❌ Log in _Process or _PhysicsProcess unless conditionally (called 60x per second!)
+- ❌ Panic-add random prints everywhere hoping something sticks
+- ❌ Log without context: `GD.Print(x)` (what is x? where is this? why?)
+- ❌ Leave excessive diagnostic logs that clutter output
+- ❌ Log sensitive or massive data dumps that make output unreadable
+
+#### Bug-Specific Strategies
+
+| Bug Type | Logging Strategy |
+|----------|------------------|
+| **Null reference** | Log node initialization, check _Ready() order |
+| **Wrong position/movement** | Log all coordinate transformations and conversions |
+| **Pathfinding issues** | Log navmesh generation, path queries, agent state |
+| **Mesh not updating** | Log dirty flag, regeneration calls, vertex counts |
+| **Collision problems** | Log collision shape setup, body types, layers |
+| **Performance issues** | Profile with Godot profiler, log counts (not individual items) |
+| **Intermittent bugs** | Add state dumps when bug condition detected |
+
+#### Example: Debugging a Nasty Pathfinding Bug
+
+```csharp
+// Level 0: Check existing logs
+// → Colonist not moving to destination
+// → "SetDestination called: (10, 5, 15)" appears in logs
+// → But no "Target reached" message
+
+// Level 1: Add diagnostic logs to narrow down the problem
+public void SetDestination(Vector3 target)
+{
+    GD.Print($"[Colonist] SetDestination called: {target}");
+    _navigationAgent.TargetPosition = target;
+}
+// → Log shows method IS being called with correct target
+
+// Level 2: Track data flow
+public override void _PhysicsProcess(double delta)
+{
+    if (!_navigationAgent.IsNavigationFinished())
+    {
+        var nextPos = _navigationAgent.GetNextPathPosition();
+        var currentPos = GlobalPosition;
+        GD.Print($"[Colonist] Moving: {currentPos} → {nextPos}, " +
+                 $"Distance: {currentPos.DistanceTo(nextPos)}");
+        // ...
+    }
+}
+// → Log shows nextPos is always equal to currentPos!
+
+// Level 3: Deep inspection
+GD.Print($"[Colonist] Agent state:");
+GD.Print($"  IsNavigationFinished: {_navigationAgent.IsNavigationFinished()}");
+GD.Print($"  PathDesiredDistance: {_navigationAgent.PathDesiredDistance}");
+GD.Print($"  TargetDesiredDistance: {_navigationAgent.TargetDesiredDistance}");
+GD.Print($"  TargetPosition: {_navigationAgent.TargetPosition}");
+GD.Print($"  Navigation map: {_navigationAgent.GetNavigationMap()}");
+// → Discovers navigation map RID is invalid!
+// → Root cause: NavigationAgent3D not properly connected to navigation map
+
+// Fix: Ensure agent is added to scene tree before setting destination
+// Remove all debug logs after fix
+```
+
+---
+
+## 13. Session Notes
 
 *Use this section to log important decisions or discoveries during development sessions.*
 
