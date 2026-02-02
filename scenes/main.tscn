@@ -1,7 +1,7 @@
 [gd_scene load_steps=8 format=3 uid="uid://dkyu0hyj1nkei"]
 
 [ext_resource type="Script" path="res://scripts/world/World.cs" id="1_world"]
-[ext_resource type="Script" path="res://scripts/camera/OrbitCamera.cs" id="2_camera"]
+[ext_resource type="Script" path="res://scripts/camera/RTSCamera.cs" id="2_camera"]
 [ext_resource type="Script" path="res://scripts/interaction/BlockInteraction.cs" id="3_interaction"]
 [ext_resource type="PackedScene" uid="uid://colonist_scene" path="res://scenes/colonist/Colonist.tscn" id="4_colonist"]
 

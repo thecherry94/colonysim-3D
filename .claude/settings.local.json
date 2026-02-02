@@ -11,7 +11,10 @@
       "mcp__blender__get_viewport_screenshot",
       "WebFetch(domain:godotforums.org)",
       "mcp__godot__get_project_info",
-      "mcp__godot__get_godot_version"
+      "mcp__godot__get_godot_version",
+      "mcp__godot__run_project",
+      "mcp__godot__get_debug_output",
+      "mcp__godot__stop_project"
     ]
   }
 }

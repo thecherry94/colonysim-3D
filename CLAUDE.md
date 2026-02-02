@@ -198,7 +198,7 @@ colonysim-3d/
 - [ ] **Vertical Chunks** - Multiple Y-level chunks for taller worlds
 
 ### Camera & Controls
-- [ ] **RTS Camera** - Top-down/isometric view with pan, zoom, rotate
+- [x] **RTS Camera** - Basic pan (WASD), zoom (wheel), rotate (Q/E)
 - [ ] **Block Placement** - Re-enable placing blocks (currently only removal)
 - [ ] **Selection System** - Click to select colonists, blocks, areas
 
@@ -327,6 +327,11 @@ Vector3 topNormal = Vector3.Up;
    - This ensures correct winding + correct normals for proper lighting
    - Use standard `CullMode.Back` (not Front workaround)
 
+8. **C# build workflow**
+   - After creating/editing .cs files: `cd "project_dir" && dotnet build colonysim_3D.csproj`
+   - Error "Cannot instantiate C# script" = forgot to build
+   - Always: Write/Edit → Build → Run/Test
+
 ---
 
 ## 11. Documentation References
@@ -445,270 +450,47 @@ All MCP functions should use this as the `projectPath` parameter.
 
 ### 12.6 Debugging & Logging Strategy
 
-**Progressive debugging approach - escalate strategically, not randomly.**
+**Progressive approach - escalate strategically:**
 
-#### Level 0: Basic Development Logging
+**Level 0:** Check existing logs via `get_debug_output`, read code, check common issues (nulls, coordinates, awaits)
 
-**Normal development logging is fine and encouraged:**
+**Level 1:** Add targeted logs at method entries, state changes, conditional branches, calculations
 
-```csharp
-// ✅ GOOD: Basic operation logging during development
-public void SetDestination(Vector3 target)
-{
-    GD.Print($"[Colonist] Setting destination: {target}");
-    _navigationAgent.TargetPosition = target;
-}
+**Level 2:** Track data flow through transformations and multi-step operations
 
-// ✅ GOOD: Log important state changes
-public void SetBlock(Vector3I worldPos, BlockType blockType)
-{
-    GD.Print($"[World] SetBlock at {worldPos}: {blockType}");
-    // ... set block logic ...
-}
+**Level 3:** Add state dump methods for intermittent/complex bugs
 
-// ✅ GOOD: Log key events
-private void OnTargetReached()
-{
-    GD.Print("[Colonist] Target reached");
-}
-```
+**Godot logging:**
+- `GD.Print($"[Context] message")` - Standard output
+- `GD.PushWarning("message")` - Yellow warnings
+- `GD.PushError("message")` - Red errors with stack trace
 
-**When debugging, start here:**
-1. Run with `run_project` and observe behavior
-2. Check `get_debug_output` for existing logs and errors
-3. Read the relevant code carefully
-4. Check for common issues:
-   - Null references (uninitialized nodes)
-   - Wrong coordinate systems (world vs local vs chunk)
-   - Missing awaits (navigation sync, physics frames)
-   - Incorrect node paths or scene structure
-
-**If existing logs aren't enough, escalate to Level 1.**
-
-#### Level 1: Targeted Diagnostic Logging
-
-**If existing logs aren't enough, add TARGETED logs at specific decision points:**
-
-```csharp
-// ✅ GOOD: Add conditional branch logging
-private void RegenerateMesh()
-{
-    if (!_isDirty)
-    {
-        GD.Print($"[Chunk {ChunkCoord}] Skipping regeneration - not dirty");  // ADD THIS
-        return;
-    }
-    GD.Print($"[Chunk {ChunkCoord}] Regenerating mesh with {_blocks.Length} blocks");
-    // ... mesh generation ...
-}
-
-// ✅ GOOD: Add intermediate calculation logging
-public Vector3I WorldToChunkCoord(Vector3I worldPos)
-{
-    var result = new Vector3I(
-        Mathf.FloorToInt(worldPos.X / 16f),
-        Mathf.FloorToInt(worldPos.Y / 16f),
-        Mathf.FloorToInt(worldPos.Z / 16f)
-    );
-    GD.Print($"[World] WorldToChunkCoord: {worldPos} → {result}");  // ADD THIS
-    return result;
-}
-
-// ❌ BAD: Panic logging hot paths
-public void _Process(double delta)
-{
-    GD.Print($"Process called delta={delta}"); // Called 60x per second!
-    // ...
-}
-```
-
-**Strategic log locations:**
-- Method entry points with parameters
-- State changes (dirty flags, mode switches)
-- Conditional branches (which path was taken?)
-- Return values from important calculations
-- Before/after critical operations (mesh regeneration, pathfinding)
-
-**When to use:**
-- Function is being called but producing wrong results
-- Need to verify which code path executes
-- Need to see parameter values at runtime
-
-#### Level 2: Data Flow Tracking
-
-**For nasty bugs, add logs to trace data through the system:**
-
-```csharp
-// ✅ GOOD: Track coordinate transformations
-public Vector3I WorldToChunkAndLocal(Vector3I worldPos, out Vector3I localPos)
-{
-    var chunkCoord = new Vector3I(
-        Mathf.FloorToInt(worldPos.X / 16f),
-        Mathf.FloorToInt(worldPos.Y / 16f),
-        Mathf.FloorToInt(worldPos.Z / 16f)
-    );
-    localPos = worldPos - chunkCoord * 16;
-
-    GD.Print($"[World] WorldPos {worldPos} → Chunk {chunkCoord}, Local {localPos}");
-    return chunkCoord;
-}
-
-// ✅ GOOD: Track navmesh generation
-var walkableSurfaces = FindWalkableSurfaces();
-GD.Print($"[ChunkNav] Found {walkableSurfaces.Count} walkable surfaces");
-
-var navMesh = GenerateNavigationMesh(walkableSurfaces);
-GD.Print($"[ChunkNav] Generated navmesh: {navMesh.Vertices.Length} vertices, " +
-         $"{navMesh.GetPolygonCount()} polygons");
-```
-
-**When to use:**
-- Data is being transformed incorrectly
-- Need to verify calculations at multiple stages
-- Tracking objects through complex systems (block coords → world → chunk → local)
-
-#### Level 3: Deep Inspection
-
-**For truly nasty bugs, add detailed state dumps:**
-
-```csharp
-// ✅ GOOD: Comprehensive state logging
-private void DebugDumpChunkState()
-{
-    GD.Print($"=== Chunk {ChunkCoord} State ===");
-    GD.Print($"  IsDirty: {_isDirty}");
-    GD.Print($"  MeshInstance: {_meshInstance != null}");
-    GD.Print($"  CollisionShape: {_collisionShape != null}");
-    GD.Print($"  NavigationRegion: {_navigationRegion != null}");
-    GD.Print($"  NavigationLinks: {_navigationLinks.Count}");
-
-    int solidBlocks = 0;
-    for (int x = 0; x < 16; x++)
-        for (int y = 0; y < 16; y++)
-            for (int z = 0; z < 16; z++)
-                if (Block.IsSolid(_blocks[x, y, z])) solidBlocks++;
-
-    GD.Print($"  Solid blocks: {solidBlocks} / {16*16*16}");
-    GD.Print($"========================");
-}
-
-// Call only when needed, not every frame
-if (GD.Print("regenerate failed"))
-    DebugDumpChunkState();
-```
-
-**When to use:**
-- System state is corrupted or inconsistent
-- Need to verify multiple related values at once
-- Bug appears intermittently and need full context when it occurs
-
-#### Godot Logging Tools
-
-```csharp
-// Standard output (shows in Output panel)
-GD.Print("Info message");
-GD.Print($"Formatted: {value}");
-
-// Warnings (yellow in console)
-GD.PushWarning("This shouldn't happen but isn't fatal");
-
-// Errors (red in console, includes stack trace)
-GD.PushError("Critical problem detected");
-
-// Assertions (only in debug builds)
-Debug.Assert(condition, "Condition should be true here");
-```
-
-#### Using get_debug_output
-
-After running with logs:
-```
-1. Use `run_project` to start the game
-2. Reproduce the bug
-3. Use `get_debug_output` to capture console output
-4. Analyze the log sequence to find the issue
-5. Use `stop_project` when done
-```
-
-**What to look for in debug output:**
-- Error messages (red) - immediate problems
-- Warning messages (yellow) - potential issues
-- Missing log messages - code not executing as expected
-- Unexpected log sequences - wrong execution order
-- Repeated messages - infinite loops or excessive calls
-
-#### Best Practices
+**Workflow:**
+1. `run_project` + reproduce bug
+2. `get_debug_output` to capture logs
+3. Analyze sequence/missing logs
+4. Add targeted logs if needed
+5. `stop_project` when done
 
 **DO:**
-- ✅ Add context to logs: `[Colonist]`, `[Chunk (1,0,1)]`, `[World]`
-- ✅ Log meaningful data: coordinates, counts, state changes
-- ✅ Use descriptive messages: "Setting destination to {pos}" not "pos={pos}"
-- ✅ Keep basic logging for key operations (helps with future debugging)
-- ✅ Remove or comment out detailed diagnostic logs once bug is fixed
-- ✅ Use PushError for serious problems, PushWarning for concerns
+- Add context: `[Colonist]`, `[Chunk (1,0,1)]`
+- Log meaningful data: coords, counts, state
+- Keep basic logging for key operations
+- Remove diagnostic logs after fix
 
 **DON'T:**
-- ❌ Log in _Process or _PhysicsProcess unless conditionally (called 60x per second!)
-- ❌ Panic-add random prints everywhere hoping something sticks
-- ❌ Log without context: `GD.Print(x)` (what is x? where is this? why?)
-- ❌ Leave excessive diagnostic logs that clutter output
-- ❌ Log sensitive or massive data dumps that make output unreadable
+- Log in `_Process`/`_PhysicsProcess` (60x/sec)
+- Panic-log random prints everywhere
+- Log without context
+- Leave excessive diagnostic logs
 
-#### Bug-Specific Strategies
-
-| Bug Type | Logging Strategy |
-|----------|------------------|
-| **Null reference** | Log node initialization, check _Ready() order |
-| **Wrong position/movement** | Log all coordinate transformations and conversions |
-| **Pathfinding issues** | Log navmesh generation, path queries, agent state |
-| **Mesh not updating** | Log dirty flag, regeneration calls, vertex counts |
-| **Collision problems** | Log collision shape setup, body types, layers |
-| **Performance issues** | Profile with Godot profiler, log counts (not individual items) |
-| **Intermittent bugs** | Add state dumps when bug condition detected |
-
-#### Example: Debugging a Nasty Pathfinding Bug
-
-```csharp
-// Level 0: Check existing logs
-// → Colonist not moving to destination
-// → "SetDestination called: (10, 5, 15)" appears in logs
-// → But no "Target reached" message
-
-// Level 1: Add diagnostic logs to narrow down the problem
-public void SetDestination(Vector3 target)
-{
-    GD.Print($"[Colonist] SetDestination called: {target}");
-    _navigationAgent.TargetPosition = target;
-}
-// → Log shows method IS being called with correct target
-
-// Level 2: Track data flow
-public override void _PhysicsProcess(double delta)
-{
-    if (!_navigationAgent.IsNavigationFinished())
-    {
-        var nextPos = _navigationAgent.GetNextPathPosition();
-        var currentPos = GlobalPosition;
-        GD.Print($"[Colonist] Moving: {currentPos} → {nextPos}, " +
-                 $"Distance: {currentPos.DistanceTo(nextPos)}");
-        // ...
-    }
-}
-// → Log shows nextPos is always equal to currentPos!
-
-// Level 3: Deep inspection
-GD.Print($"[Colonist] Agent state:");
-GD.Print($"  IsNavigationFinished: {_navigationAgent.IsNavigationFinished()}");
-GD.Print($"  PathDesiredDistance: {_navigationAgent.PathDesiredDistance}");
-GD.Print($"  TargetDesiredDistance: {_navigationAgent.TargetDesiredDistance}");
-GD.Print($"  TargetPosition: {_navigationAgent.TargetPosition}");
-GD.Print($"  Navigation map: {_navigationAgent.GetNavigationMap()}");
-// → Discovers navigation map RID is invalid!
-// → Root cause: NavigationAgent3D not properly connected to navigation map
-
-// Fix: Ensure agent is added to scene tree before setting destination
-// Remove all debug logs after fix
-```
+**Bug-specific logging:**
+- Null reference → node init, _Ready() order
+- Position/movement → coordinate transformations
+- Pathfinding → navmesh generation, path queries, agent state
+- Mesh updates → dirty flag, regeneration calls, vertex counts
+- Collision → shape setup, body types, layers
+- Performance → use Godot profiler, log counts only
 
 ---
 
@@ -931,6 +713,32 @@ GD.Print($"  Navigation map: {_navigationAgent.GetNavigationMap()}");
 - **Movement physics:**
   - Going UP: Jump triggered, horizontal momentum carries colonist in arc
   - Going DOWN: Gravity handles fall naturally (no jump needed)
+
+### Session 10 (RTS Camera - Basic Implementation)
+- **Implemented basic RTS camera**
+- Replaced `scripts/camera/OrbitCamera.cs` with `scripts/camera/RTSCamera.cs`
+- **Controls:**
+  - WASD: Pan camera target in world XZ plane
+  - Q/E: Rotate camera yaw around target
+  - Mouse wheel: Zoom in/out (constrained 10-150 units)
+  - Pitch: Fixed at 0.7 radians (~40 degrees)
+- **Properties:**
+  - PanSpeed: 20 units/sec
+  - RotationSpeed: 1.5 rad/sec
+  - ZoomSpeed: 5 units/wheel tick
+  - Distance constraints: 10 (min) to 150 (max)
+- Added 6 input actions to `project.godot`: camera_forward, camera_backward, camera_left, camera_right, camera_rotate_left, camera_rotate_right
+- **Movement behavior:**
+  - Pan moves relative to camera view direction (forward follows where camera is looking)
+  - Rotation spins camera around target point
+  - Zoom maintains focus on target
+- Updated `scenes/main.tscn` to reference RTSCamera.cs
+- **Future enhancements (not in this iteration):**
+  - Pitch control (Page Up/Down)
+  - Middle mouse drag panning
+  - Edge-of-screen panning
+  - World bounds (prevent camera leaving world)
+  - Follow mode (auto-center on selected colonist)
 
 ---
 
