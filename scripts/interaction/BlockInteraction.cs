@@ -10,12 +10,14 @@ public partial class BlockInteraction : Node
 {
     private Camera3D _camera;
     private World _world;
+    private Colonist _colonist;
     private const float RayLength = 200.0f;
 
-    public void Initialize(Camera3D camera, World world)
+    public void Initialize(Camera3D camera, World world, Colonist colonist)
     {
         _camera = camera;
         _world = world;
+        _colonist = colonist;
         GD.Print("BlockInteraction initialized");
     }
 
@@ -29,7 +31,29 @@ public partial class BlockInteraction : Node
             {
                 TryRemoveBlock(mouseButton.Position);
             }
+            else if (mouseButton.ButtonIndex == MouseButton.Right)
+            {
+                TryCommandColonist(mouseButton.Position);
+            }
         }
+    }
+
+    private void TryCommandColonist(Vector2 screenPos)
+    {
+        if (_camera == null || _colonist == null) return;
+
+        var from = _camera.ProjectRayOrigin(screenPos);
+        var to = from + _camera.ProjectRayNormal(screenPos) * RayLength;
+
+        var spaceState = _camera.GetWorld3D().DirectSpaceState;
+        var query = PhysicsRayQueryParameters3D.Create(from, to);
+        var result = spaceState.IntersectRay(query);
+
+        if (result == null || result.Count == 0) return;
+
+        var hitPos = (Vector3)result["position"];
+        GD.Print($"Right-click: commanding colonist to {hitPos}");
+        _colonist.SetDestination(hitPos);
     }
 
     private void TryRemoveBlock(Vector2 screenPos)
