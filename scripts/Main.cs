@@ -4,34 +4,41 @@ using Godot;
 
 public partial class Main : Node3D
 {
+    private World _world;
+
     public override void _Ready()
     {
         GD.Print("=== ColonySim Starting ===");
 
-        // Point camera at the test chunk center
-        var camera = GetNode<Camera3D>("Camera3D");
-        camera.LookAt(new Vector3(8, 2, 8), Vector3.Up);
+        SetupWorld();
 
-        SetupTestChunk();
+        // Point camera at center of 3x3 chunk grid
+        var camera = GetNode<Camera3D>("Camera3D");
+        camera.Position = new Vector3(8, 30, 45);
+        camera.LookAt(new Vector3(8, 4, 8), Vector3.Up);
+
         SpawnTestBalls();
     }
 
-    private void SetupTestChunk()
+    private void SetupWorld()
     {
-        var chunk = new Chunk();
-        AddChild(chunk);
-        chunk.Initialize(Vector3I.Zero);
-        chunk.FillTestData();
-        chunk.GenerateMesh((lx, ly, lz) => BlockType.Air);
-        GD.Print("Test chunk created and meshed.");
+        _world = new World();
+        _world.Name = "World";
+        AddChild(_world);
+
+        // Load a 3x3 grid of chunks centered at origin
+        _world.LoadChunkArea(Vector3I.Zero, 1);
+        GD.Print("World initialized: 3x3 chunk grid (48x48 blocks)");
     }
 
     private void SpawnTestBalls()
     {
-        // Ball 1: over solid terrain, should land on surface
-        SpawnBall(new Vector3(4, 12, 4), "Ball_Terrain");
-        // Ball 2: over the 3x3 pit, should fall into the pit
-        SpawnBall(new Vector3(8, 12, 8), "Ball_Pit");
+        // Ball 1: over chunk (0,0,0), should land on terrain
+        SpawnBall(new Vector3(8, 20, 8), "Ball_Center");
+        // Ball 2: over chunk (-1,0,-1), tests negative coordinates
+        SpawnBall(new Vector3(-8, 20, -8), "Ball_Negative");
+        // Ball 3: over chunk (1,0,1), tests positive multi-chunk
+        SpawnBall(new Vector3(20, 20, 20), "Ball_Positive");
     }
 
     private void SpawnBall(Vector3 position, string name)
