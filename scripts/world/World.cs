@@ -36,13 +36,27 @@ public partial class World : Node3D
         public bool IsEmpty;
     }
 
-    // Queue of chunks that need mesh (re)generation on the main thread.
-    // Includes newly loaded chunks + their neighbors for cross-chunk face culling.
-    // Processed with a per-frame budget to avoid stutter.
+    // Queue of chunks that need mesh (re)generation.
+    // Phase 2 dispatches these to background threads for GenerateMeshData().
+    // Phase 2b applies completed mesh results on the main thread.
     private readonly Queue<Vector3I> _meshQueue = new();
     private readonly HashSet<Vector3I> _meshQueueSet = new();  // dedup: avoid queueing same chunk twice
-    private const double MeshTimeBudgetMs = 4.0;  // max ms per frame for greedy meshing
-    private const int MaxApplyPerFrame = 16;  // max chunk nodes created per frame (Phase 1)
+
+    // Background mesh generation: greedy meshing runs on thread pool,
+    // Godot objects (ArrayMesh, ConcavePolygonShape3D) created on main thread.
+    private readonly ConcurrentQueue<MeshGenResult> _meshResults = new();
+    private readonly HashSet<Vector3I> _meshing = new();  // coords currently being meshed in background
+    private const int MaxConcurrentMeshes = 8;  // max simultaneous background mesh jobs
+    private const int MaxMeshApplyPerFrame = 16;  // max mesh results applied per frame
+
+    private struct MeshGenResult
+    {
+        public Vector3I Coord;
+        public ChunkMeshGenerator.ChunkMeshData MeshData;
+    }
+
+    // Budget for Phase 1 (terrain result application)
+    private const int MaxApplyPerFrame = 16;
 
     // Terrain prefetch cache: stores pre-generated block data for chunks beyond render
     // distance but within prefetch range. When a chunk enters render distance, its terrain
@@ -329,25 +343,60 @@ public partial class World : Node3D
         if (applied > 0 || skippedEmpty > 0)
             GD.Print($"Applied {applied} terrain results, {skippedEmpty} empty skipped ({_loadQueue.Count} queued, {_generating.Count} generating, {_meshQueue.Count} mesh pending)");
 
-        // Phase 2: Time-budgeted mesh generation on main thread (correct neighbor data).
-        // Uses wall-clock time limit instead of fixed count to adapt to hardware speed.
-        int meshed = 0;
-        long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
-        double ticksPerMs = System.Diagnostics.Stopwatch.Frequency / 1000.0;
-        while (_meshQueue.Count > 0)
+        // Phase 2: Dispatch mesh generation to background threads.
+        // Snapshots neighbor boundary data on the main thread (safe), then dispatches
+        // GenerateMeshData() to the thread pool. This moves the ~13ms greedy meshing
+        // off the main thread entirely.
+        int dispatched = 0;
+        while (_meshQueue.Count > 0 && _meshing.Count < MaxConcurrentMeshes)
         {
             var coord = _meshQueue.Dequeue();
             _meshQueueSet.Remove(coord);
-            if (_chunks.TryGetValue(coord, out var chunk))
+            if (!_chunks.TryGetValue(coord, out var chunk)) continue;
+            if (_meshing.Contains(coord)) continue;
+
+            // Skip empty chunks — no mesh needed
+            if (chunk.IsEmpty())
             {
-                chunk.GenerateMesh(MakeNeighborCallback(coord));
-                meshed++;
+                chunk.ApplyMeshData(new ChunkMeshGenerator.ChunkMeshData
+                {
+                    IsEmpty = true,
+                    Surfaces = Array.Empty<ChunkMeshGenerator.SurfaceData>(),
+                    CollisionFaces = Array.Empty<Vector3>(),
+                });
+                continue;
             }
 
-            // Check time budget after each mesh (at least 1 per frame)
-            double elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - startTicks) / ticksPerMs;
-            if (elapsedMs >= MeshTimeBudgetMs)
-                break;
+            // Snapshot block data and neighbor boundaries on main thread
+            var blocks = chunk.GetBlockData();
+            var neighborCallback = MakeSnapshotNeighborCallback(coord);
+
+            _meshing.Add(coord);
+            var meshCoord = coord;
+
+            Task.Run(() =>
+            {
+                var meshData = ChunkMeshGenerator.GenerateMeshData(blocks, neighborCallback);
+                _meshResults.Enqueue(new MeshGenResult
+                {
+                    Coord = meshCoord,
+                    MeshData = meshData,
+                });
+            });
+            dispatched++;
+        }
+
+        // Phase 2b: Apply completed background mesh results on the main thread.
+        // BuildArrayMesh + ConcavePolygonShape3D creation are fast (~1ms) — not a bottleneck.
+        int meshApplied = 0;
+        while (_meshResults.TryDequeue(out var meshResult) && meshApplied < MaxMeshApplyPerFrame)
+        {
+            _meshing.Remove(meshResult.Coord);
+            if (_chunks.TryGetValue(meshResult.Coord, out var chunk))
+            {
+                chunk.ApplyMeshData(meshResult.MeshData);
+                meshApplied++;
+            }
         }
 
         // Phase 3: Load chunks from queue. Check caches first (instant), then dispatch to thread pool.
@@ -447,11 +496,11 @@ public partial class World : Node3D
     }
 
     /// <summary>
-    /// Queue a chunk for mesh (re)generation if it exists and isn't already queued.
+    /// Queue a chunk for mesh (re)generation if it exists and isn't already queued or in-flight.
     /// </summary>
     private void QueueMeshGeneration(Vector3I coord)
     {
-        if (_chunks.ContainsKey(coord) && _meshQueueSet.Add(coord))
+        if (_chunks.ContainsKey(coord) && !_meshing.Contains(coord) && _meshQueueSet.Add(coord))
             _meshQueue.Enqueue(coord);
     }
 
@@ -480,6 +529,7 @@ public partial class World : Node3D
 
         _chunks.Remove(coord);
         _meshQueueSet.Remove(coord);  // Remove stale mesh queue entry
+        _meshing.Remove(coord);  // Background mesh result will be discarded in Phase 2b
         RemoveChild(chunk);
         chunk.QueueFree();
     }
@@ -539,6 +589,7 @@ public partial class World : Node3D
     /// Creates a callback for ChunkMeshGenerator that resolves out-of-bounds
     /// local coordinates by converting to world coords and querying the world.
     /// MUST be called on the main thread (reads _chunks dictionary).
+    /// Used for synchronous mesh generation (editor mode, block modification).
     /// </summary>
     private Func<int, int, int, BlockType> MakeNeighborCallback(Vector3I chunkCoord)
     {
@@ -550,6 +601,78 @@ public partial class World : Node3D
                 chunkCoord.Z * Chunk.SIZE + lz
             );
             return GetBlock(worldBlock);
+        };
+    }
+
+    /// <summary>
+    /// Creates a thread-safe neighbor callback by snapshotting the boundary slices
+    /// of all 6 face-adjacent neighbors. The returned callback can be called from
+    /// any thread — it reads from pre-captured arrays, not from _chunks.
+    ///
+    /// Each neighbor contributes one 16×16 slice of blocks (the face touching this chunk).
+    /// For missing neighbors, the snapshot contains all Air (correct default).
+    ///
+    /// The callback only needs to handle out-of-bounds local coords (the greedy mesher
+    /// checks in-bounds blocks directly from the block array). Out-of-bounds is always
+    /// exactly 1 block past one face, so we only need the immediately adjacent slice.
+    /// </summary>
+    private Func<int, int, int, BlockType> MakeSnapshotNeighborCallback(Vector3I chunkCoord)
+    {
+        // 6 neighbor slices: +X, -X, +Y, -Y, +Z, -Z
+        // Each is 16×16 blocks, indexed by the two non-normal axes.
+        var slicePosX = new BlockType[Chunk.SIZE * Chunk.SIZE];
+        var sliceNegX = new BlockType[Chunk.SIZE * Chunk.SIZE];
+        var slicePosY = new BlockType[Chunk.SIZE * Chunk.SIZE];
+        var sliceNegY = new BlockType[Chunk.SIZE * Chunk.SIZE];
+        var slicePosZ = new BlockType[Chunk.SIZE * Chunk.SIZE];
+        var sliceNegZ = new BlockType[Chunk.SIZE * Chunk.SIZE];
+
+        // +X neighbor: their local x=0 face → our local x=16
+        if (_chunks.TryGetValue(chunkCoord + new Vector3I(1, 0, 0), out var nPosX))
+            for (int y = 0; y < Chunk.SIZE; y++)
+            for (int z = 0; z < Chunk.SIZE; z++)
+                slicePosX[y * Chunk.SIZE + z] = nPosX.GetBlock(0, y, z);
+
+        // -X neighbor: their local x=15 face → our local x=-1
+        if (_chunks.TryGetValue(chunkCoord + new Vector3I(-1, 0, 0), out var nNegX))
+            for (int y = 0; y < Chunk.SIZE; y++)
+            for (int z = 0; z < Chunk.SIZE; z++)
+                sliceNegX[y * Chunk.SIZE + z] = nNegX.GetBlock(Chunk.SIZE - 1, y, z);
+
+        // +Y neighbor: their local y=0 face → our local y=16
+        if (_chunks.TryGetValue(chunkCoord + new Vector3I(0, 1, 0), out var nPosY))
+            for (int x = 0; x < Chunk.SIZE; x++)
+            for (int z = 0; z < Chunk.SIZE; z++)
+                slicePosY[x * Chunk.SIZE + z] = nPosY.GetBlock(x, 0, z);
+
+        // -Y neighbor: their local y=15 face → our local y=-1
+        if (_chunks.TryGetValue(chunkCoord + new Vector3I(0, -1, 0), out var nNegY))
+            for (int x = 0; x < Chunk.SIZE; x++)
+            for (int z = 0; z < Chunk.SIZE; z++)
+                sliceNegY[x * Chunk.SIZE + z] = nNegY.GetBlock(x, Chunk.SIZE - 1, z);
+
+        // +Z neighbor: their local z=0 face → our local z=16
+        if (_chunks.TryGetValue(chunkCoord + new Vector3I(0, 0, 1), out var nPosZ))
+            for (int x = 0; x < Chunk.SIZE; x++)
+            for (int y = 0; y < Chunk.SIZE; y++)
+                slicePosZ[x * Chunk.SIZE + y] = nPosZ.GetBlock(x, y, 0);
+
+        // -Z neighbor: their local z=15 face → our local z=-1
+        if (_chunks.TryGetValue(chunkCoord + new Vector3I(0, 0, -1), out var nNegZ))
+            for (int x = 0; x < Chunk.SIZE; x++)
+            for (int y = 0; y < Chunk.SIZE; y++)
+                sliceNegZ[x * Chunk.SIZE + y] = nNegZ.GetBlock(x, y, Chunk.SIZE - 1);
+
+        return (int lx, int ly, int lz) =>
+        {
+            // Determine which face we've crossed and look up from snapshot
+            if (lx >= Chunk.SIZE) return slicePosX[ly * Chunk.SIZE + lz];
+            if (lx < 0) return sliceNegX[ly * Chunk.SIZE + lz];
+            if (ly >= Chunk.SIZE) return slicePosY[lx * Chunk.SIZE + lz];
+            if (ly < 0) return sliceNegY[lx * Chunk.SIZE + lz];
+            if (lz >= Chunk.SIZE) return slicePosZ[lx * Chunk.SIZE + ly];
+            if (lz < 0) return sliceNegZ[lx * Chunk.SIZE + ly];
+            return BlockType.Air; // shouldn't happen — in-bounds checked directly
         };
     }
 
