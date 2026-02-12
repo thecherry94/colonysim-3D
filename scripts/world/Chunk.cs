@@ -93,6 +93,7 @@ public partial class Chunk : Node3D
     /// <summary>
     /// Rebuild the mesh. getNeighborBlock handles coords outside 0..15.
     /// Skips mesh generation entirely for empty chunks (all air).
+    /// Uses single GenerateMeshData() call for both render + collision (no double work).
     /// </summary>
     public void GenerateMesh(Func<int, int, int, BlockType> getNeighborBlock)
     {
@@ -104,15 +105,30 @@ public partial class Chunk : Node3D
             return;
         }
 
-        var mesh = ChunkMeshGenerator.GenerateMesh(_blocks, getNeighborBlock);
-        _meshInstance.Mesh = mesh;
+        // Single call generates both render surfaces and collision faces
+        var meshData = ChunkMeshGenerator.GenerateMeshData(_blocks, getNeighborBlock);
+        ApplyMeshData(meshData);
+    }
 
-        // Build collision
-        var collisionFaces = ChunkMeshGenerator.GenerateCollisionFaces(_blocks, getNeighborBlock);
-        if (collisionFaces.Length > 0)
+    /// <summary>
+    /// Apply pre-computed mesh data to the Godot scene objects. MUST be called on the main thread.
+    /// Used both by GenerateMesh() (synchronous) and the background pipeline (deferred apply).
+    /// </summary>
+    public void ApplyMeshData(ChunkMeshGenerator.ChunkMeshData meshData)
+    {
+        if (meshData.IsEmpty || meshData.Surfaces.Length == 0)
+        {
+            _meshInstance.Mesh = null;
+            _collisionShape.Shape = null;
+            return;
+        }
+
+        _meshInstance.Mesh = ChunkMeshGenerator.BuildArrayMesh(meshData.Surfaces);
+
+        if (meshData.CollisionFaces.Length > 0)
         {
             var shape = new ConcavePolygonShape3D();
-            shape.SetFaces(collisionFaces);
+            shape.SetFaces(meshData.CollisionFaces);
             _collisionShape.Shape = shape;
         }
         else

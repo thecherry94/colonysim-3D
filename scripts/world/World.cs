@@ -1,7 +1,9 @@
 namespace ColonySim;
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Godot;
 
 /// <summary>
@@ -19,7 +21,27 @@ public partial class World : Node3D
     // Chunk streaming state
     private Vector2I? _lastCameraChunkXZ;
     private readonly Queue<Vector3I> _loadQueue = new();
-    private const int ChunksPerFrame = 16;
+
+    // Background chunk generation: terrain + blocks computed on thread pool,
+    // Godot objects created on main thread from completed results.
+    private readonly ConcurrentQueue<ChunkGenResult> _genResults = new();
+    private readonly HashSet<Vector3I> _generating = new();  // coords currently being generated
+    private readonly HashSet<Vector3I> _unloadedWhileGenerating = new();  // coords unloaded before gen completed
+    private const int MaxConcurrentGens = 8;
+
+    private struct ChunkGenResult
+    {
+        public Vector3I Coord;
+        public BlockType[,,] Blocks;
+        public bool IsEmpty;
+    }
+
+    // Queue of chunks that need mesh (re)generation on the main thread.
+    // Includes newly loaded chunks + their neighbors for cross-chunk face culling.
+    // Processed with a per-frame budget to avoid stutter.
+    private readonly Queue<Vector3I> _meshQueue = new();
+    private readonly HashSet<Vector3I> _meshQueueSet = new();  // dedup: avoid queueing same chunk twice
+    private const int MaxMeshPerFrame = 4;
 
     // Modified chunk cache: stores block data for dirty chunks that were unloaded.
     // On reload, cached data is used instead of regenerating from noise.
@@ -185,48 +207,140 @@ public partial class World : Node3D
         foreach (var coord in toUnload)
             UnloadChunk(coord);
 
-        if (toUnload.Count > 0)
-            GD.Print($"Unloaded {toUnload.Count} chunks");
+        // Cancel in-flight background generation for chunks that are now out of range
+        var toCancel = new List<Vector3I>();
+        foreach (var coord in _generating)
+        {
+            int dx = Mathf.Abs(coord.X - cameraChunkXZ.X);
+            int dz = Mathf.Abs(coord.Z - cameraChunkXZ.Y);
+            if (dx > unloadDist || dz > unloadDist)
+                toCancel.Add(coord);
+        }
+        foreach (var coord in toCancel)
+        {
+            _generating.Remove(coord);
+            _unloadedWhileGenerating.Add(coord);
+        }
+
+        int totalUnloaded = toUnload.Count + toCancel.Count;
+        if (totalUnloaded > 0)
+            GD.Print($"Unloaded {toUnload.Count} chunks, cancelled {toCancel.Count} generating");
     }
 
     private void ProcessLoadQueue()
     {
+        // Phase 1: Apply completed background terrain generation results.
+        // Only sets block data — no mesh generation here (deferred to Phase 2).
+        int applied = 0;
+        while (_genResults.TryDequeue(out var result))
+        {
+            _generating.Remove(result.Coord);
+
+            // Skip if chunk was unloaded while generating (camera moved away)
+            if (_unloadedWhileGenerating.Remove(result.Coord)) continue;
+            if (_chunks.ContainsKey(result.Coord)) continue; // Already loaded
+
+            var chunk = new Chunk();
+            AddChild(chunk);
+            if (Engine.IsEditorHint())
+                chunk.Owner = GetTree().EditedSceneRoot;
+            chunk.Initialize(result.Coord);
+            chunk.SetBlockData(result.Blocks);
+            _chunks[result.Coord] = chunk;
+            applied++;
+
+            // Queue this chunk + its 6 neighbors for mesh generation.
+            // Neighbors need re-meshing for correct cross-chunk face culling.
+            QueueMeshGeneration(result.Coord);
+            QueueMeshGeneration(result.Coord + new Vector3I(1, 0, 0));
+            QueueMeshGeneration(result.Coord + new Vector3I(-1, 0, 0));
+            QueueMeshGeneration(result.Coord + new Vector3I(0, 1, 0));
+            QueueMeshGeneration(result.Coord + new Vector3I(0, -1, 0));
+            QueueMeshGeneration(result.Coord + new Vector3I(0, 0, 1));
+            QueueMeshGeneration(result.Coord + new Vector3I(0, 0, -1));
+        }
+
+        if (applied > 0)
+            GD.Print($"Applied {applied} terrain results ({_loadQueue.Count} queued, {_generating.Count} generating, {_meshQueue.Count} mesh pending)");
+
+        // Phase 2: Budgeted mesh generation on main thread (correct neighbor data).
+        // Greedy meshing is expensive — spread over frames to avoid stutter.
+        int meshed = 0;
+        while (_meshQueue.Count > 0 && meshed < MaxMeshPerFrame)
+        {
+            var coord = _meshQueue.Dequeue();
+            _meshQueueSet.Remove(coord);
+            if (_chunks.TryGetValue(coord, out var chunk))
+            {
+                chunk.GenerateMesh(MakeNeighborCallback(coord));
+                meshed++;
+            }
+        }
+
+        // Phase 3: Dispatch new chunks to background threads for terrain generation.
+        // Only terrain blocks are computed off-thread; mesh gen stays on main thread.
         if (_loadQueue.Count == 0) return;
 
-        // Higher budget when queue is large (initial load) to fill world faster
-        int budget = _loadQueue.Count > 100 ? ChunksPerFrame * 8 : ChunksPerFrame;
+        int budget = _loadQueue.Count > 100 ? MaxConcurrentGens * 4 : MaxConcurrentGens;
 
-        int loaded = 0;
-        var newlyLoaded = new List<Vector3I>();
-
-        while (_loadQueue.Count > 0 && loaded < budget)
+        while (_loadQueue.Count > 0 && _generating.Count < budget)
         {
             var coord = _loadQueue.Dequeue();
-            if (_chunks.ContainsKey(coord)) continue; // Already loaded (e.g. by initial burst)
-            LoadChunk(coord);
-            newlyLoaded.Add(coord);
-            loaded++;
+            if (_chunks.ContainsKey(coord) || _generating.Contains(coord)) continue;
+
+            // Check modified chunk cache first (must be done on main thread)
+            if (_modifiedChunkCache.TryGetValue(coord, out var cachedBlocks))
+            {
+                _modifiedChunkCache.Remove(coord);
+                var chunk = new Chunk();
+                AddChild(chunk);
+                if (Engine.IsEditorHint())
+                    chunk.Owner = GetTree().EditedSceneRoot;
+                chunk.Initialize(coord);
+                chunk.SetBlockData(cachedBlocks);
+                _chunks[coord] = chunk;
+                QueueMeshGeneration(coord);
+                GD.Print($"Restored modified chunk {coord} from cache");
+                continue;
+            }
+
+            _generating.Add(coord);
+
+            // Capture for closure
+            var genCoord = coord;
+            var terrainGen = _terrainGenerator;
+
+            Task.Run(() =>
+            {
+                var blocks = new BlockType[Chunk.SIZE, Chunk.SIZE, Chunk.SIZE];
+                terrainGen.GenerateChunkBlocks(blocks, genCoord);
+
+                bool isEmpty = true;
+                for (int x = 0; x < Chunk.SIZE && isEmpty; x++)
+                for (int y = 0; y < Chunk.SIZE && isEmpty; y++)
+                for (int z = 0; z < Chunk.SIZE && isEmpty; z++)
+                {
+                    if (blocks[x, y, z] != BlockType.Air)
+                        isEmpty = false;
+                }
+
+                _genResults.Enqueue(new ChunkGenResult
+                {
+                    Coord = genCoord,
+                    Blocks = blocks,
+                    IsEmpty = isEmpty,
+                });
+            });
         }
+    }
 
-        // Regenerate meshes for newly loaded chunks + their neighbors
-        var toRegenerate = new HashSet<Vector3I>();
-        foreach (var coord in newlyLoaded)
-        {
-            toRegenerate.Add(coord);
-            // Add all 6 face-adjacent neighbors
-            toRegenerate.Add(coord + new Vector3I(1, 0, 0));
-            toRegenerate.Add(coord + new Vector3I(-1, 0, 0));
-            toRegenerate.Add(coord + new Vector3I(0, 1, 0));
-            toRegenerate.Add(coord + new Vector3I(0, -1, 0));
-            toRegenerate.Add(coord + new Vector3I(0, 0, 1));
-            toRegenerate.Add(coord + new Vector3I(0, 0, -1));
-        }
-
-        foreach (var coord in toRegenerate)
-            RegenerateChunkMesh(coord);
-
-        if (loaded > 0)
-            GD.Print($"Loaded {loaded} chunks ({_loadQueue.Count} remaining)");
+    /// <summary>
+    /// Queue a chunk for mesh (re)generation if it exists and isn't already queued.
+    /// </summary>
+    private void QueueMeshGeneration(Vector3I coord)
+    {
+        if (_chunks.ContainsKey(coord) && _meshQueueSet.Add(coord))
+            _meshQueue.Enqueue(coord);
     }
 
     private void UnloadChunk(Vector3I coord)
@@ -240,6 +354,7 @@ public partial class World : Node3D
         }
 
         _chunks.Remove(coord);
+        _meshQueueSet.Remove(coord);  // Remove stale mesh queue entry
         RemoveChild(chunk);
         chunk.QueueFree();
     }
@@ -298,6 +413,7 @@ public partial class World : Node3D
     /// <summary>
     /// Creates a callback for ChunkMeshGenerator that resolves out-of-bounds
     /// local coordinates by converting to world coords and querying the world.
+    /// MUST be called on the main thread (reads _chunks dictionary).
     /// </summary>
     private Func<int, int, int, BlockType> MakeNeighborCallback(Vector3I chunkCoord)
     {

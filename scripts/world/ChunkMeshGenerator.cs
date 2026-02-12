@@ -54,9 +54,37 @@ public static class ChunkMeshGenerator
                 Type = FaceType.Side,   DepthAxis = 0, UAxis = 2, VAxis = 1, FaceAtDepthPlusOne = false },
     };
 
-    // Reusable per-slice buffers (single-threaded — safe as static)
-    private static readonly BlockType[] _sliceMask = new BlockType[SIZE * SIZE];
-    private static readonly bool[] _sliceVisited = new bool[SIZE * SIZE];
+    // Thread-local scratch buffers for greedy meshing (safe for parallel chunk generation)
+    [ThreadStatic] private static BlockType[] _sliceMask;
+    [ThreadStatic] private static bool[] _sliceVisited;
+
+    private static void EnsureBuffers()
+    {
+        _sliceMask ??= new BlockType[SIZE * SIZE];
+        _sliceVisited ??= new bool[SIZE * SIZE];
+    }
+
+    /// <summary>
+    /// Pre-computed mesh data that can be built on a background thread,
+    /// then applied to Godot objects on the main thread.
+    /// </summary>
+    public struct ChunkMeshData
+    {
+        public bool IsEmpty;
+        // Per-surface data for the render mesh
+        public SurfaceData[] Surfaces;
+        // Collision triangles (flat vertex triples)
+        public Vector3[] CollisionFaces;
+    }
+
+    public struct SurfaceData
+    {
+        public BlockType BlockType;
+        public Vector3[] Vertices;
+        public Vector3[] Normals;
+        public Color[] Colors;
+        public int[] Indices;
+    }
 
     /// <summary>
     /// Map abstract slice coordinates (depth, u, v) to concrete block coordinates (x, y, z).
@@ -332,17 +360,16 @@ public static class ChunkMeshGenerator
     }
 
     /// <summary>
-    /// Builds an ArrayMesh with one surface per visible block type using greedy meshing.
-    /// Merges adjacent same-type faces into larger rectangles for fewer triangles.
+    /// Generate all chunk mesh data (render + collision) on any thread.
+    /// Returns raw arrays that can later be applied to Godot objects on the main thread.
     /// </summary>
-    public static ArrayMesh GenerateMesh(
+    public static ChunkMeshData GenerateMeshData(
         BlockType[,,] blocks,
         Func<int, int, int, BlockType> getNeighborBlock)
     {
-        var mesh = new ArrayMesh();
-        int totalVertices = 0;
-        int totalTriangles = 0;
-        int surfaceCount = 0;
+        EnsureBuffers();
+
+        var surfaces = new List<SurfaceData>();
 
         foreach (BlockType blockType in Enum.GetValues<BlockType>())
         {
@@ -353,7 +380,6 @@ public static class ChunkMeshGenerator
             var colors = new List<Color>();
             var indices = new List<int>();
 
-            // Pre-compute face colors for this block type
             Color topColor = BlockData.GetColor(blockType);
             Color sideColor = BlockData.GetSideColor(blockType);
             Color bottomColor = BlockData.GetBottomColor(blockType);
@@ -379,48 +405,18 @@ public static class ChunkMeshGenerator
 
             if (vertices.Count == 0) continue;
 
-            // Build surface arrays
-            var arrays = new Godot.Collections.Array();
-            arrays.Resize((int)Mesh.ArrayType.Max);
-            arrays[(int)Mesh.ArrayType.Vertex] = vertices.ToArray();
-            arrays[(int)Mesh.ArrayType.Normal] = normals.ToArray();
-            arrays[(int)Mesh.ArrayType.Color] = colors.ToArray();
-            arrays[(int)Mesh.ArrayType.Index] = indices.ToArray();
-
-            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
-
-            // Material that uses vertex colors
-            var material = new StandardMaterial3D();
-            material.VertexColorUseAsAlbedo = true;
-            material.Roughness = 0.85f;
-            material.Metallic = 0.0f;
-            if (blockType == BlockType.Water)
+            surfaces.Add(new SurfaceData
             {
-                material.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                material.Roughness = 0.2f;
-                material.Metallic = 0.1f;
-            }
-            mesh.SurfaceSetMaterial(surfaceCount, material);
-
-            totalVertices += vertices.Count;
-            totalTriangles += indices.Count / 3;
-            surfaceCount++;
+                BlockType = blockType,
+                Vertices = vertices.ToArray(),
+                Normals = normals.ToArray(),
+                Colors = colors.ToArray(),
+                Indices = indices.ToArray(),
+            });
         }
 
-        return mesh;
-    }
-
-    /// <summary>
-    /// Builds a flat Vector3[] of collision triangles for ConcavePolygonShape3D using greedy meshing.
-    /// All solid block types are merged together for maximum rectangle merging.
-    /// Every 3 consecutive vertices form one triangle.
-    /// </summary>
-    public static Vector3[] GenerateCollisionFaces(
-        BlockType[,,] blocks,
-        Func<int, int, int, BlockType> getNeighborBlock)
-    {
+        // Collision faces
         var collisionVerts = new List<Vector3>();
-
         for (int faceIdx = 0; faceIdx < 6; faceIdx++)
         for (int slice = 0; slice < SIZE; slice++)
         {
@@ -428,6 +424,71 @@ public static class ChunkMeshGenerator
             GreedyMergeCollision(faceIdx, slice, collisionVerts);
         }
 
-        return collisionVerts.ToArray();
+        return new ChunkMeshData
+        {
+            IsEmpty = surfaces.Count == 0 && collisionVerts.Count == 0,
+            Surfaces = surfaces.ToArray(),
+            CollisionFaces = collisionVerts.ToArray(),
+        };
+    }
+
+    /// <summary>
+    /// Apply pre-computed mesh data to Godot objects. MUST be called on the main thread.
+    /// </summary>
+    public static ArrayMesh BuildArrayMesh(SurfaceData[] surfaces)
+    {
+        var mesh = new ArrayMesh();
+        int surfaceCount = 0;
+
+        foreach (var surface in surfaces)
+        {
+            var arrays = new Godot.Collections.Array();
+            arrays.Resize((int)Mesh.ArrayType.Max);
+            arrays[(int)Mesh.ArrayType.Vertex] = surface.Vertices;
+            arrays[(int)Mesh.ArrayType.Normal] = surface.Normals;
+            arrays[(int)Mesh.ArrayType.Color] = surface.Colors;
+            arrays[(int)Mesh.ArrayType.Index] = surface.Indices;
+
+            mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
+
+            var material = new StandardMaterial3D();
+            material.VertexColorUseAsAlbedo = true;
+            material.Roughness = 0.85f;
+            material.Metallic = 0.0f;
+            if (surface.BlockType == BlockType.Water)
+            {
+                material.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
+                material.Roughness = 0.2f;
+                material.Metallic = 0.1f;
+            }
+            mesh.SurfaceSetMaterial(surfaceCount, material);
+            surfaceCount++;
+        }
+
+        return mesh;
+    }
+
+    /// <summary>
+    /// Builds an ArrayMesh with one surface per visible block type using greedy meshing.
+    /// Convenience method that generates data and builds the mesh in one call.
+    /// </summary>
+    public static ArrayMesh GenerateMesh(
+        BlockType[,,] blocks,
+        Func<int, int, int, BlockType> getNeighborBlock)
+    {
+        var data = GenerateMeshData(blocks, getNeighborBlock);
+        return BuildArrayMesh(data.Surfaces);
+    }
+
+    /// <summary>
+    /// Builds a flat Vector3[] of collision triangles for ConcavePolygonShape3D using greedy meshing.
+    /// Convenience method — for threaded use, prefer GenerateMeshData() instead.
+    /// </summary>
+    public static Vector3[] GenerateCollisionFaces(
+        BlockType[,,] blocks,
+        Func<int, int, int, BlockType> getNeighborBlock)
+    {
+        var data = GenerateMeshData(blocks, getNeighborBlock);
+        return data.CollisionFaces;
     }
 }
