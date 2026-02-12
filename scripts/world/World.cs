@@ -41,7 +41,20 @@ public partial class World : Node3D
     // Processed with a per-frame budget to avoid stutter.
     private readonly Queue<Vector3I> _meshQueue = new();
     private readonly HashSet<Vector3I> _meshQueueSet = new();  // dedup: avoid queueing same chunk twice
-    private const int MaxMeshPerFrame = 4;
+    private const double MeshTimeBudgetMs = 4.0;  // max ms per frame for greedy meshing
+    private const int MaxApplyPerFrame = 16;  // max chunk nodes created per frame (Phase 1)
+
+    // Terrain prefetch cache: stores pre-generated block data for chunks beyond render
+    // distance but within prefetch range. When a chunk enters render distance, its terrain
+    // is already available — skipping the background gen latency entirely.
+    private readonly ConcurrentDictionary<Vector3I, BlockType[,,]> _terrainCache = new();
+    private readonly HashSet<Vector3I> _prefetching = new();  // coords currently being prefetched
+    private const int PrefetchRingWidth = 3;  // prefetch extends this many chunks beyond render radius
+
+    // Empty chunks: coords that were generated and found to contain only Air.
+    // No Godot node is created — GetBlock() returns Air via the _chunks miss path.
+    // Tracked so we don't re-generate them or re-queue them.
+    private readonly HashSet<Vector3I> _emptyChunks = new();
 
     // Modified chunk cache: stores block data for dirty chunks that were unloaded.
     // On reload, cached data is used instead of regenerating from noise.
@@ -183,13 +196,13 @@ public partial class World : Node3D
 
         _lastCameraChunkXZ = cameraChunkXZ;
 
-        // Queue chunks that need loading
+        // Queue chunks that need loading (skip already loaded and known-empty)
         for (int x = cameraChunkXZ.X - radius; x <= cameraChunkXZ.X + radius; x++)
         for (int z = cameraChunkXZ.Y - radius; z <= cameraChunkXZ.Y + radius; z++)
         for (int y = 0; y < _yChunkLayers; y++)
         {
             var coord = new Vector3I(x, y, z);
-            if (!_chunks.ContainsKey(coord))
+            if (!_chunks.ContainsKey(coord) && !_emptyChunks.Contains(coord))
                 _loadQueue.Enqueue(coord);
         }
 
@@ -206,6 +219,18 @@ public partial class World : Node3D
 
         foreach (var coord in toUnload)
             UnloadChunk(coord);
+
+        // Also evict empty chunk records outside unload distance
+        var emptyToRemove = new List<Vector3I>();
+        foreach (var coord in _emptyChunks)
+        {
+            int dx = Mathf.Abs(coord.X - cameraChunkXZ.X);
+            int dz = Mathf.Abs(coord.Z - cameraChunkXZ.Y);
+            if (dx > unloadDist || dz > unloadDist)
+                emptyToRemove.Add(coord);
+        }
+        foreach (var coord in emptyToRemove)
+            _emptyChunks.Remove(coord);
 
         // Cancel in-flight background generation for chunks that are now out of range
         var toCancel = new List<Vector3I>();
@@ -225,20 +250,67 @@ public partial class World : Node3D
         int totalUnloaded = toUnload.Count + toCancel.Count;
         if (totalUnloaded > 0)
             GD.Print($"Unloaded {toUnload.Count} chunks, cancelled {toCancel.Count} generating");
+
+        // Evict terrain cache entries that are far beyond prefetch range
+        int prefetchDist = radius + PrefetchRingWidth;
+        int evictDist = prefetchDist + 2;
+        var toEvict = new List<Vector3I>();
+        foreach (var coord in _terrainCache.Keys)
+        {
+            int dx = Mathf.Abs(coord.X - cameraChunkXZ.X);
+            int dz = Mathf.Abs(coord.Z - cameraChunkXZ.Y);
+            if (dx > evictDist || dz > evictDist)
+                toEvict.Add(coord);
+        }
+        foreach (var coord in toEvict)
+            _terrainCache.TryRemove(coord, out _);
+
+        // Cancel out-of-range prefetches
+        var toCancelPrefetch = new List<Vector3I>();
+        foreach (var coord in _prefetching)
+        {
+            int dx = Mathf.Abs(coord.X - cameraChunkXZ.X);
+            int dz = Mathf.Abs(coord.Z - cameraChunkXZ.Y);
+            if (dx > evictDist || dz > evictDist)
+                toCancelPrefetch.Add(coord);
+        }
+        foreach (var coord in toCancelPrefetch)
+            _prefetching.Remove(coord);
+
+        // Dispatch prefetch jobs for chunks in the prefetch ring (beyond render, within prefetch range)
+        DispatchPrefetch(cameraChunkXZ, radius);
     }
 
     private void ProcessLoadQueue()
     {
-        // Phase 1: Apply completed background terrain generation results.
-        // Only sets block data — no mesh generation here (deferred to Phase 2).
+        // Phase 1: Apply completed background terrain generation results (budgeted).
+        // Creates Chunk nodes and sets block data — no mesh generation (deferred to Phase 2).
+        // Empty chunks (all air) skip node creation entirely to save resources.
         int applied = 0;
+        int skippedEmpty = 0;
         while (_genResults.TryDequeue(out var result))
         {
             _generating.Remove(result.Coord);
 
             // Skip if chunk was unloaded while generating (camera moved away)
             if (_unloadedWhileGenerating.Remove(result.Coord)) continue;
-            if (_chunks.ContainsKey(result.Coord)) continue; // Already loaded
+            if (_chunks.ContainsKey(result.Coord) || _emptyChunks.Contains(result.Coord)) continue;
+
+            // Empty chunks: no Godot node needed. GetBlock() returns Air via _chunks miss.
+            if (result.IsEmpty)
+            {
+                _emptyChunks.Add(result.Coord);
+                skippedEmpty++;
+                continue;
+            }
+
+            // Budget: don't create too many Chunk nodes in one frame (AddChild is expensive)
+            if (applied >= MaxApplyPerFrame)
+            {
+                // Put back for next frame
+                _genResults.Enqueue(result);
+                break;
+            }
 
             var chunk = new Chunk();
             AddChild(chunk);
@@ -250,23 +322,19 @@ public partial class World : Node3D
             applied++;
 
             // Queue this chunk + its 6 neighbors for mesh generation.
-            // Neighbors need re-meshing for correct cross-chunk face culling.
             QueueMeshGeneration(result.Coord);
-            QueueMeshGeneration(result.Coord + new Vector3I(1, 0, 0));
-            QueueMeshGeneration(result.Coord + new Vector3I(-1, 0, 0));
-            QueueMeshGeneration(result.Coord + new Vector3I(0, 1, 0));
-            QueueMeshGeneration(result.Coord + new Vector3I(0, -1, 0));
-            QueueMeshGeneration(result.Coord + new Vector3I(0, 0, 1));
-            QueueMeshGeneration(result.Coord + new Vector3I(0, 0, -1));
+            QueueNeighborMeshes(result.Coord);
         }
 
-        if (applied > 0)
-            GD.Print($"Applied {applied} terrain results ({_loadQueue.Count} queued, {_generating.Count} generating, {_meshQueue.Count} mesh pending)");
+        if (applied > 0 || skippedEmpty > 0)
+            GD.Print($"Applied {applied} terrain results, {skippedEmpty} empty skipped ({_loadQueue.Count} queued, {_generating.Count} generating, {_meshQueue.Count} mesh pending)");
 
-        // Phase 2: Budgeted mesh generation on main thread (correct neighbor data).
-        // Greedy meshing is expensive — spread over frames to avoid stutter.
+        // Phase 2: Time-budgeted mesh generation on main thread (correct neighbor data).
+        // Uses wall-clock time limit instead of fixed count to adapt to hardware speed.
         int meshed = 0;
-        while (_meshQueue.Count > 0 && meshed < MaxMeshPerFrame)
+        long startTicks = System.Diagnostics.Stopwatch.GetTimestamp();
+        double ticksPerMs = System.Diagnostics.Stopwatch.Frequency / 1000.0;
+        while (_meshQueue.Count > 0)
         {
             var coord = _meshQueue.Dequeue();
             _meshQueueSet.Remove(coord);
@@ -275,20 +343,26 @@ public partial class World : Node3D
                 chunk.GenerateMesh(MakeNeighborCallback(coord));
                 meshed++;
             }
+
+            // Check time budget after each mesh (at least 1 per frame)
+            double elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - startTicks) / ticksPerMs;
+            if (elapsedMs >= MeshTimeBudgetMs)
+                break;
         }
 
-        // Phase 3: Dispatch new chunks to background threads for terrain generation.
-        // Only terrain blocks are computed off-thread; mesh gen stays on main thread.
+        // Phase 3: Load chunks from queue. Check caches first (instant), then dispatch to thread pool.
         if (_loadQueue.Count == 0) return;
 
         int budget = _loadQueue.Count > 100 ? MaxConcurrentGens * 4 : MaxConcurrentGens;
+        int cacheHits = 0;
 
         while (_loadQueue.Count > 0 && _generating.Count < budget)
         {
             var coord = _loadQueue.Dequeue();
-            if (_chunks.ContainsKey(coord) || _generating.Contains(coord)) continue;
+            if (_chunks.ContainsKey(coord) || _generating.Contains(coord)
+                || _emptyChunks.Contains(coord)) continue;
 
-            // Check modified chunk cache first (must be done on main thread)
+            // Priority 1: Modified chunk cache (player-edited blocks)
             if (_modifiedChunkCache.TryGetValue(coord, out var cachedBlocks))
             {
                 _modifiedChunkCache.Remove(coord);
@@ -300,13 +374,48 @@ public partial class World : Node3D
                 chunk.SetBlockData(cachedBlocks);
                 _chunks[coord] = chunk;
                 QueueMeshGeneration(coord);
+                QueueNeighborMeshes(coord);
                 GD.Print($"Restored modified chunk {coord} from cache");
                 continue;
             }
 
+            // Priority 2: Prefetched terrain cache (pre-generated beyond render distance)
+            if (_terrainCache.TryRemove(coord, out var prefetchedBlocks))
+            {
+                _prefetching.Remove(coord);
+
+                // Check if prefetched data is all air
+                bool prefetchEmpty = true;
+                for (int bx = 0; bx < Chunk.SIZE && prefetchEmpty; bx++)
+                for (int by = 0; by < Chunk.SIZE && prefetchEmpty; by++)
+                for (int bz = 0; bz < Chunk.SIZE && prefetchEmpty; bz++)
+                {
+                    if (prefetchedBlocks[bx, by, bz] != BlockType.Air)
+                        prefetchEmpty = false;
+                }
+
+                if (prefetchEmpty)
+                {
+                    _emptyChunks.Add(coord);
+                    continue;
+                }
+
+                var chunk = new Chunk();
+                AddChild(chunk);
+                if (Engine.IsEditorHint())
+                    chunk.Owner = GetTree().EditedSceneRoot;
+                chunk.Initialize(coord);
+                chunk.SetBlockData(prefetchedBlocks);
+                _chunks[coord] = chunk;
+                QueueMeshGeneration(coord);
+                QueueNeighborMeshes(coord);
+                cacheHits++;
+                continue;
+            }
+
+            // Priority 3: Dispatch to thread pool for terrain generation
             _generating.Add(coord);
 
-            // Capture for closure
             var genCoord = coord;
             var terrainGen = _terrainGenerator;
 
@@ -332,6 +441,9 @@ public partial class World : Node3D
                 });
             });
         }
+
+        if (cacheHits > 0)
+            GD.Print($"Prefetch cache hits: {cacheHits} chunks loaded instantly ({_terrainCache.Count} cached)");
     }
 
     /// <summary>
@@ -341,6 +453,19 @@ public partial class World : Node3D
     {
         if (_chunks.ContainsKey(coord) && _meshQueueSet.Add(coord))
             _meshQueue.Enqueue(coord);
+    }
+
+    /// <summary>
+    /// Queue the 6 face-adjacent neighbors for mesh re-generation (cross-chunk face culling).
+    /// </summary>
+    private void QueueNeighborMeshes(Vector3I coord)
+    {
+        QueueMeshGeneration(coord + new Vector3I(1, 0, 0));
+        QueueMeshGeneration(coord + new Vector3I(-1, 0, 0));
+        QueueMeshGeneration(coord + new Vector3I(0, 1, 0));
+        QueueMeshGeneration(coord + new Vector3I(0, -1, 0));
+        QueueMeshGeneration(coord + new Vector3I(0, 0, 1));
+        QueueMeshGeneration(coord + new Vector3I(0, 0, -1));
     }
 
     private void UnloadChunk(Vector3I coord)
@@ -426,6 +551,55 @@ public partial class World : Node3D
             );
             return GetBlock(worldBlock);
         };
+    }
+
+    /// <summary>
+    /// Dispatch background terrain generation for chunks in the prefetch ring
+    /// (beyond render distance, within prefetch range). These chunks won't be
+    /// added to the scene — their block data is cached for instant loading later.
+    /// </summary>
+    private void DispatchPrefetch(Vector2I cameraChunkXZ, int renderRadius)
+    {
+        int prefetchDist = renderRadius + PrefetchRingWidth;
+        int dispatched = 0;
+        int maxPrefetchPerFrame = 8;
+
+        for (int x = cameraChunkXZ.X - prefetchDist; x <= cameraChunkXZ.X + prefetchDist; x++)
+        for (int z = cameraChunkXZ.Y - prefetchDist; z <= cameraChunkXZ.Y + prefetchDist; z++)
+        {
+            // Skip chunks inside render distance (they're handled by the normal pipeline)
+            int dx = Mathf.Abs(x - cameraChunkXZ.X);
+            int dz = Mathf.Abs(z - cameraChunkXZ.Y);
+            if (dx <= renderRadius && dz <= renderRadius) continue;
+
+            for (int y = 0; y < _yChunkLayers; y++)
+            {
+                if (dispatched >= maxPrefetchPerFrame) return;
+
+                var coord = new Vector3I(x, y, z);
+
+                // Skip if already loaded, cached, generating, prefetching, or known empty
+                if (_chunks.ContainsKey(coord)) continue;
+                if (_emptyChunks.Contains(coord)) continue;
+                if (_terrainCache.ContainsKey(coord)) continue;
+                if (_generating.Contains(coord)) continue;
+                if (_prefetching.Contains(coord)) continue;
+                if (_modifiedChunkCache.ContainsKey(coord)) continue;
+
+                _prefetching.Add(coord);
+                dispatched++;
+
+                var genCoord = coord;
+                var terrainGen = _terrainGenerator;
+
+                Task.Run(() =>
+                {
+                    var blocks = new BlockType[Chunk.SIZE, Chunk.SIZE, Chunk.SIZE];
+                    terrainGen.GenerateChunkBlocks(blocks, genCoord);
+                    _terrainCache[genCoord] = blocks;
+                });
+            }
+        }
     }
 
     /// <summary>
