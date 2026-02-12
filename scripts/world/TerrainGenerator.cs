@@ -29,7 +29,7 @@ public class TerrainGenerator
     [ThreadStatic] private static int[] _surfaceHeightCache;
 
     public const int WaterLevel = 25;
-    public const int MaxHeight = 62;
+    public const int MaxHeight = 90;
     private const float RiverWidth = 0.04f;
     private const float RiverBankWidth = 0.08f;
 
@@ -224,9 +224,10 @@ public class TerrainGenerator
             out float heightOffset, out float ampScale, out float detScale);
 
         // Base height from continentalness + biome offset
-        float baseHeight = Mathf.Lerp(22.0f, 40.0f, cSquared) + heightOffset;
-        float amplitude = Mathf.Lerp(4.0f, 18.0f, cSquared) * ampScale;
-        float detailAmp = Mathf.Lerp(0.5f, 3.0f, s.CNorm) * detScale;
+        // Taller terrain = more underground volume for caves
+        float baseHeight = Mathf.Lerp(50.0f, 70.0f, cSquared) + heightOffset;
+        float amplitude = Mathf.Lerp(5.0f, 20.0f, cSquared) * ampScale;
+        float detailAmp = Mathf.Lerp(0.5f, 4.0f, s.CNorm) * detScale;
 
         float rawHeight = baseHeight + s.Elevation * amplitude + s.Detail * detailAmp;
 
@@ -272,9 +273,9 @@ public class TerrainGenerator
         float cSquared = s.CNorm * s.CNorm;
         ComputeBlendedParams(s.TNorm, s.MNorm, s.CNorm,
             out float heightOffset, out float ampScale, out float detScale);
-        float baseH = Mathf.Lerp(22.0f, 40.0f, cSquared) + heightOffset;
-        float amp = Mathf.Lerp(4.0f, 18.0f, cSquared) * ampScale;
-        float detAmp = Mathf.Lerp(0.5f, 3.0f, s.CNorm) * detScale;
+        float baseH = Mathf.Lerp(50.0f, 70.0f, cSquared) + heightOffset;
+        float amp = Mathf.Lerp(5.0f, 20.0f, cSquared) * ampScale;
+        float detAmp = Mathf.Lerp(0.5f, 4.0f, s.CNorm) * detScale;
         float naturalHeight = baseH + s.Elevation * amp + s.Detail * detAmp;
 
         return naturalHeight > WaterLevel + 1;
@@ -417,7 +418,7 @@ public class TerrainGenerator
             return BlockType.Sand;
         }
         // Mountain snow caps
-        if (biome == BiomeType.Mountains && surfaceHeight >= 48)
+        if (biome == BiomeType.Mountains && surfaceHeight >= 82)
             return BlockType.Snow;
 
         return data.SurfaceBlock;

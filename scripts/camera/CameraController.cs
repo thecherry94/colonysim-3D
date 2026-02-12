@@ -39,7 +39,7 @@ public partial class CameraController : Node3D
     private int _maxSliceY = 128; // default, updated via SetMaxWorldHeight()
     private const int MinSliceY = 1;
     private const int SliceStep = 1; // blocks per Page Up/Down press
-    private const int DefaultStartSliceY = 40; // first press starts near typical surface height
+    private const int DefaultStartSliceY = 70; // first press starts near typical surface height
 
     public Camera3D Camera => _camera;
 
