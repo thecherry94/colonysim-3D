@@ -23,7 +23,7 @@ public partial class Main : Node3D
             // RTS camera: pivot centered on world, camera orbits around it
             var cameraController = new CameraController();
             cameraController.Name = "CameraController";
-            cameraController.Position = new Vector3(8, 4, 8); // Pivot at world center
+            cameraController.Position = new Vector3(40, 6, 40); // Pivot at world center
             AddChild(cameraController);
             var camera = cameraController.Camera;
 
@@ -31,7 +31,7 @@ public partial class Main : Node3D
             var pathfinder = new VoxelPathfinder(_world);
             var colonist = new Colonist();
             colonist.Name = "Colonist";
-            colonist.Position = new Vector3(8, 15, 8); // Drop above terrain, will fall to surface
+            colonist.Position = new Vector3(40, 15, 40); // Drop above terrain, will fall to surface
             AddChild(colonist);
             colonist.Initialize(_world, pathfinder);
 
@@ -63,8 +63,8 @@ public partial class Main : Node3D
         if (Engine.IsEditorHint())
             _world.Owner = GetTree().EditedSceneRoot;
 
-        // Load a 3x3 grid of chunks centered at origin
-        _world.LoadChunkArea(Vector3I.Zero, 1);
-        GD.Print("World initialized: 3x3 chunk grid (48x48 blocks)");
+        // Load a 5x5 grid of chunks (80x80 blocks)
+        _world.LoadChunkArea(new Vector3I(2, 0, 2), 2);
+        GD.Print("World initialized: 5x5 chunk grid (80x80 blocks)");
     }
 }

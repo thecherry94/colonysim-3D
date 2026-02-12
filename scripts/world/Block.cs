@@ -12,6 +12,8 @@ public enum BlockType : byte
     Stone = 1,
     Dirt = 2,
     Grass = 3,
+    Sand = 4,
+    Water = 5,
 }
 
 /// <summary>
@@ -19,13 +21,34 @@ public enum BlockType : byte
 /// </summary>
 public static class BlockData
 {
-    public static bool IsSolid(BlockType type) => type != BlockType.Air;
+    public static bool IsSolid(BlockType type) => type != BlockType.Air && type != BlockType.Water;
+    public static bool IsLiquid(BlockType type) => type == BlockType.Water;
 
     public static Color GetColor(BlockType type) => type switch
     {
-        BlockType.Stone => new Color(0.5f, 0.5f, 0.5f),
-        BlockType.Dirt => new Color(0.55f, 0.35f, 0.2f),
-        BlockType.Grass => new Color(0.3f, 0.65f, 0.2f),
+        BlockType.Stone => new Color(0.55f, 0.55f, 0.58f),
+        BlockType.Dirt => new Color(0.60f, 0.40f, 0.22f),
+        BlockType.Grass => new Color(0.35f, 0.70f, 0.25f),
+        BlockType.Sand => new Color(0.85f, 0.78f, 0.52f),
+        BlockType.Water => new Color(0.2f, 0.4f, 0.75f, 0.7f),
         _ => Colors.Transparent,
     };
+
+    /// <summary>
+    /// Darkened color for side faces to give blocks visual depth.
+    /// </summary>
+    public static Color GetSideColor(BlockType type)
+    {
+        var c = GetColor(type);
+        return new Color(c.R * 0.75f, c.G * 0.75f, c.B * 0.75f);
+    }
+
+    /// <summary>
+    /// Darkened color for bottom faces.
+    /// </summary>
+    public static Color GetBottomColor(BlockType type)
+    {
+        var c = GetColor(type);
+        return new Color(c.R * 0.55f, c.G * 0.55f, c.B * 0.55f);
+    }
 }

@@ -130,11 +130,13 @@ public class VoxelPathfinder
     /// <summary>
     /// Check 2-high clearance above a solid block at (x, y, z).
     /// Colonist is ~2 blocks tall, needs air at y+1 and y+2.
+    /// Also blocks on water — colonists can't walk through water.
     /// </summary>
     private bool HasClearance(int x, int y, int z)
     {
-        return !BlockData.IsSolid(_world.GetBlock(new Vector3I(x, y + 1, z)))
-            && !BlockData.IsSolid(_world.GetBlock(new Vector3I(x, y + 2, z)));
+        var above1 = _world.GetBlock(new Vector3I(x, y + 1, z));
+        var above2 = _world.GetBlock(new Vector3I(x, y + 2, z));
+        return above1 == BlockType.Air && above2 == BlockType.Air;
     }
 
     private float Heuristic(VoxelNode a, VoxelNode b)
