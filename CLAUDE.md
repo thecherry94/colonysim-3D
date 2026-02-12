@@ -109,11 +109,13 @@ Add **stuck detection**: if the colonist makes no progress for ~2 seconds, clear
 
 ### 3.5 Chunk Streaming & Threaded Generation
 
-Chunks load/unload dynamically based on camera position with a **three-phase pipeline** inside `ProcessLoadQueue()`:
+Chunks load/unload dynamically based on camera position with a **four-phase pipeline** inside `ProcessLoadQueue()`:
 
 **Phase 1 — Apply terrain results (budgeted):** Background threads post completed `ChunkGenResult` structs to a `ConcurrentQueue`. Phase 1 dequeues these, creates Godot scene nodes (`Chunk` + `MeshInstance3D` + `StaticBody3D` + `CollisionShape3D`), and queues the chunk + its 6 neighbors for mesh generation. Budgeted to `MaxApplyPerFrame` (16) to prevent frame spikes when many results arrive at once. Overflow results are re-enqueued for the next frame.
 
-**Phase 2 — Time-budgeted mesh generation:** Greedy meshing (`GenerateMeshData()`) runs on the main thread with correct neighbor data via `MakeNeighborCallback()`. Uses a **wall-clock time budget** (`MeshTimeBudgetMs = 4.0`) via `Stopwatch.GetTimestamp()` instead of a fixed chunk count. This adapts to hardware speed — fast PCs mesh more chunks per frame, slow PCs mesh fewer, both maintaining smooth frame rates.
+**Phase 2 — Dispatch background mesh generation:** Chunks from the mesh queue are dispatched to the .NET thread pool for greedy meshing. Before dispatch, the main thread snapshots neighbor boundary data via `MakeSnapshotNeighborCallback()` — 6 flat arrays of 16×16 blocks, one per face-adjacent neighbor. The returned callback reads from these snapshots, making it safe to call from any thread. Up to `MaxConcurrentMeshes` (8) mesh jobs run concurrently. `GenerateMeshData()` (~13ms per chunk) runs entirely off the main thread.
+
+**Phase 2b — Apply mesh results:** Completed `MeshGenResult` structs are dequeued from `_meshResults` (`ConcurrentQueue`). `Chunk.ApplyMeshData()` creates Godot objects (`BuildArrayMesh()` + `ConcavePolygonShape3D`) on the main thread — this is fast (~1ms per chunk). Up to `MaxMeshApplyPerFrame` (16) results applied per frame.
 
 **Phase 3 — Dispatch terrain generation:** New chunks are dequeued from the load queue. Modified chunk cache and terrain prefetch cache are checked first (instant restore). Otherwise, `Task.Run()` dispatches `TerrainGenerator.GenerateChunkBlocks()` to the .NET thread pool. Up to `MaxConcurrentGens` (8, or 32 during large queue bursts) chunks generate concurrently.
 
@@ -126,9 +128,11 @@ Chunks load/unload dynamically based on camera position with a **three-phase pip
 - Chunks unload when their XZ distance from camera exceeds `radius + 2` (hysteresis prevents thrashing at boundaries)
 - In-flight background generation is cancelled for chunks that move out of range (`_unloadedWhileGenerating` set)
 - `QueueNeighborMeshes()` helper deduplicates the pattern of queuing 6 face-adjacent neighbors for mesh regeneration
+- `QueueMeshGeneration()` skips chunks already in-flight (`_meshing` set) to prevent duplicate work
 - Editor mode still uses synchronous `LoadChunkArea()` for immediate preview
+- Block modification (`RegenerateChunkMesh()`) still uses synchronous `MakeNeighborCallback()` for immediate visual feedback
 
-**Why mesh generation stays on the main thread:** Greedy meshing needs correct neighbor data for cross-chunk face culling. When chunks load in waves, neighbors don't exist yet during the initial loading burst. Attempting background mesh gen with placeholder Air neighbors causes grid-pattern artifacts at chunk boundaries (every boundary face renders). Snapshotting neighbor boundary slices also fails because neighbors haven't been generated yet. The time-budgeted main-thread approach guarantees correct neighbor data while adapting to hardware speed.
+**Background mesh generation with neighbor snapshots:** The earlier approach of main-thread meshing (see lesson 5.4) was a bottleneck — each chunk took ~13ms, and with 800+ in the mesh queue, initial loading took ~13 seconds at 1 chunk/frame. The solution was `MakeSnapshotNeighborCallback()`: before dispatching, the main thread copies the 16×16 boundary face of each neighbor into 6 flat arrays. This works because by the time the mesh queue processes chunks, their neighbors are already loaded (terrain generation completes first). The snapshot approach avoids the original artifact problem documented in lesson 5.4 because it only dispatches when neighbor data actually exists.
 
 ### 3.6 Dirty Chunk Caching
 
@@ -176,7 +180,24 @@ The chunk mesh generator uses **greedy meshing** (Mikola Lysenko algorithm) to m
 
 **Performance:** Flat 16×16 surfaces reduce from 256 quads (512 triangles) to 1 quad (2 triangles) — up to 256× reduction. Typical terrain sees 5-10× overall triangle reduction.
 
-### 3.9 Why Build From Scratch (Not Use Existing Voxel Libraries)
+### 3.9 Tree Generation
+
+Deterministic grid-based tree placement integrated into `TerrainGenerator.GenerateChunkBlocks()`:
+
+**Grid spacing:** The world is divided into 4×4 block cells (`TreeGridSize`). Each cell can spawn at most one tree at a deterministic position within it, guaranteeing ~4-block minimum spacing. `PositionHash(cellX, cellZ, seed)` provides a fast integer hash for both probability checks and position offsets.
+
+**Per-biome density:** Each `BiomeData` has a `TreeDensity` threshold (0.0–1.0). Forest=0.30 (dense), Swamp=0.15, Grassland=0.05 (scattered), Mountains=0.02, Tundra=0.01, Desert=0.00 (none). Trees below water level are skipped.
+
+**Tree shape (~34 leaves + ~5 trunk):**
+- Trunk: 4-6 blocks of Wood above surface (height varies deterministically per tree)
+- Lower canopy: 2 layers of Leaves at radius 2 (diamond shape) around trunk top
+- Upper canopy: 2 layers of Leaves at radius 1 (cross shape) above trunk top
+
+**Cross-chunk correctness:** Trees near chunk boundaries have canopy extending into neighboring chunks. `PlaceTreesInChunk()` checks grid cells within `chunkBounds ± TreeInfluenceRadius` (2 blocks), so both chunks independently place the same tree's overlapping blocks within their own bounds. No inter-chunk coordination needed — pure determinism.
+
+**Block types:** `Wood = 11`, `Leaves = 12`. Both are solid (`IsSolid()` returns true). Colors: Wood = brown `(0.55, 0.35, 0.18)`, Leaves = green `(0.20, 0.55, 0.15)`. Existing meshing, collision, and pathfinding handle them automatically.
+
+### 3.10 Why Build From Scratch (Not Use Existing Voxel Libraries)
 
 Evaluated options:
 - **Zylann's godot_voxel** (C++): Powerful but C# bindings are broken, and it's overkill for colony sim needs
@@ -245,17 +266,17 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 - The `[Tool]` attribute is useful for editor previews but creates this risk. All runtime node creation in `_Ready()` must be guarded with `if (!Engine.IsEditorHint())` where appropriate, OR the scene file must be kept clean.
 - If `MoveAndSlide()` produces zero movement despite valid velocity, check for overlapping collision shapes first.
 
-### 5.4 Background Mesh Generation Causes Chunk Boundary Artifacts
+### 5.4 Background Mesh Generation: Timing Matters for Neighbor Snapshots
 
-**Problem:** After moving terrain generation to background threads, attempting to also move greedy meshing to background threads caused visible grid-pattern artifacts at chunk boundaries — especially on water surfaces. Every chunk boundary face was rendered, creating a wireframe grid effect.
+**Problem (initial attempt):** Moving greedy meshing to background threads caused visible grid-pattern artifacts at chunk boundaries — every boundary face was rendered, creating a wireframe grid effect.
 
-**Root cause:** Chunks load in waves. When a chunk is dispatched to a background thread, most of its 6 face-adjacent neighbors haven't been generated yet. Using `BlockType.Air` as a fallback for missing neighbors causes every boundary face to be treated as "exposed to air" and rendered.
+**Root cause:** Chunks load in waves. During the initial loading burst, neighbors haven't been generated yet. Snapshotting neighbor boundary slices at dispatch time fails because the snapshots are mostly null/Air.
 
-**Attempted fix:** Snapshotting neighbor boundary slices (copying the 16×16 boundary face of each loaded neighbor before dispatch). This also failed because during the initial loading burst, neighbors genuinely don't exist yet — the snapshots are mostly null/Air.
+**Initial workaround:** Keep mesh generation on the main thread with a time budget. This was correct as a first pass but created a severe bottleneck — each chunk took ~13ms to mesh, meaning 800+ queued chunks drained at 1/frame, taking ~13 seconds.
 
-**Correct solution:** Keep mesh generation on the main thread where all loaded chunks are accessible via `MakeNeighborCallback()`. Budget mesh generation to a few chunks per frame (4) to avoid stutter. Only terrain block generation (noise sampling) runs on background threads.
+**Correct solution (implemented):** Background mesh generation with `MakeSnapshotNeighborCallback()` — but dispatch only after terrain generation completes. The key insight from diagnostic logging: the mesh queue only starts processing after `loadQueue=0` and `generating=0`. By that point, all neighbors exist and boundary snapshots are correct. The 4-phase pipeline naturally ensures this ordering.
 
-**Lesson:** Thread-safe data access is not enough — the data must actually *exist* when you need it. In a chunk streaming system, neighbors load asynchronously and may not be available when a chunk first appears. Mesh generation that depends on neighbor state must wait until neighbors are loaded.
+**Lesson:** Thread-safe data access is not enough — the data must actually *exist* when you need it. The solution is not "never background it" but rather "background it at the right time." Pipeline ordering (terrain gen → node creation → mesh dispatch) guarantees neighbors exist when snapshots are taken.
 
 ### 5.5 General Debugging Principles
 
@@ -289,13 +310,15 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 15 | Greedy meshing (Mikola Lysenko algorithm, up to 256× triangle reduction) | Done |
 | 16 | Threaded chunk generation (background terrain gen, budgeted main-thread mesh) | Done |
 | 17 | Streaming optimizations (terrain prefetch, empty chunk skip, time-budgeted mesh) | Done |
+| 18 | Tree generation (deterministic grid-based, per-biome density, Wood + Leaves blocks) | Done |
+| 19 | Background mesh generation (threaded greedy meshing, neighbor snapshots, softer lighting) | Done |
 
 ### Future Phases (not yet planned in detail):
 - Multiple colonists
 - Task/job system (mine, build, haul designations)
 - Inventory and resource system (mined blocks become items)
 - Colonist needs (hunger, rest, mood)
-- More block types (wood, ore)
+- More block types (ore)
 - Better terrain (caves, overhangs, ore veins)
 - Selection system (click to select colonists, area designation)
 - Save/load system (disk persistence for modified chunks)
@@ -317,6 +340,7 @@ colonysim-3d/
 │   │   ├── Chunk.cs                      # 16x16x16 block storage, mesh, collision, dirty flag
 │   │   ├── ChunkMeshGenerator.cs         # Greedy meshing ArrayMesh + collision generation
 │   │   ├── TerrainGenerator.cs           # 5-layer FastNoiseLite terrain + biomes + rivers
+│   │   ├── TreeGenerator.cs             # Deterministic grid-based tree placement
 │   │   ├── Biome.cs                      # BiomeType enum, BiomeData struct, BiomeTable
 │   │   └── Block.cs                      # BlockType enum + BlockData utilities
 │   ├── navigation/
@@ -363,9 +387,11 @@ colonysim-3d/
 
 14. **`[ThreadStatic]` buffers need lazy initialization.** `[ThreadStatic]` fields are per-thread but NOT initialized on new threads — they default to null/zero. Always check and initialize before use (e.g., `_sliceMask ??= new BlockType[256]`).
 
-15. **Use time budgets, not fixed counts, for per-frame work.** A fixed "N chunks per frame" is either too few on fast hardware or too many on slow hardware. Use `Stopwatch.GetTimestamp()` with a wall-clock millisecond budget (e.g., 4ms) so the system adapts automatically. This applies to any expensive per-frame loop (mesh gen, node creation, etc.).
+15. **Move expensive computation off the main thread.** Greedy meshing (~13ms/chunk) should run on background threads, not the main thread with a time budget. The time budget approach only processes 1 chunk/frame when each chunk exceeds the budget, creating massive backlogs. Use `MakeSnapshotNeighborCallback()` to capture neighbor boundary data before dispatch so background threads have correct data without accessing shared state.
 
 16. **Skip empty chunks entirely.** Upper Y layers are almost always 100% air. Tracking them in a `HashSet<Vector3I>` instead of creating full Godot node hierarchies (`Chunk` → `MeshInstance3D` → `StaticBody3D` → `CollisionShape3D`) eliminates ~50% of scene tree overhead during streaming.
+
+17. **Tree generation is deterministic — no special caching needed.** Trees are placed via `PositionHash(worldX, worldZ, seed)` during terrain generation. When a chunk unloads and reloads, identical trees regenerate from the same seed. Only player-modified chunks (with trees mined) need caching, handled by the existing dirty chunk cache.
 
 ---
 
