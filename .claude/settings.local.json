@@ -6,7 +6,28 @@
       "mcp__Desktop_Commander__read_file",
       "Bash(git init:*)",
       "Bash(git add:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(dotnet build:*)",
+      "Bash(gh auth:*)",
+      "Bash(where:*)",
+      "Bash(git checkout:*)",
+      "Bash(powershell.exe -NoProfile -Command \"Get-ChildItem -Path ''C:\\\\Program Files\\\\Godot'',''C:\\\\Program Files \\(x86\\)\\\\Godot'',''C:\\\\Godot'',''D:\\\\Godot'',''E:\\\\Godot'' -Filter ''streaming_diag.tsv'' -Recurse -Depth 4 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName\")",
+      "Bash(dir:*)",
+      "Bash(powershell.exe -NoProfile -Command \"$p = Join-Path $env:APPDATA ''Godot\\\\export_templates''; Write-Host \"\"Checking: $p\"\"; if \\(Test-Path $p\\) { Get-ChildItem $p -Recurse -Depth 1 | ForEach-Object { $_FullName } } else { Write-Host ''NOT FOUND'' }\")",
+      "Bash(findstr:*)",
+      "Bash(cmd /c \"dir %APPDATA% /b 2>nul | findstr /i godot\")",
+      "Bash(cmd /c \"dir /s /b C:\\\\Users\\\\Philipp\\\\AppData\\\\*export_templates* 2>nul\")",
+      "Bash(cmd /c \"dir E:\\\\hobbies\\\\programming\\\\godot\\\\colonysim-3d\\\\build /b 2>nul\")",
+      "Bash(cmd /c:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:forum.godotengine.org)",
+      "Bash(powershell:*)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:minecraft.fandom.com)",
+      "WebFetch(domain:discussions.unity.com)",
+      "WebFetch(domain:forum.playboundless.com)",
+      "WebFetch(domain:www.alanzucconi.com)",
+      "WebFetch(domain:www.jdhwilkins.com)"
     ]
   }
 }

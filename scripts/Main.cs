@@ -73,7 +73,7 @@ public partial class Main : Node3D
             // Increase shadow distance for taller terrain
             var light = GetNodeOrNull<DirectionalLight3D>("DirectionalLight3D");
             if (light != null)
-                light.DirectionalShadowMaxDistance = 250;
+                light.DirectionalShadowMaxDistance = 120;
         }
     }
 

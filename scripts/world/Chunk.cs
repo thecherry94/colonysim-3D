@@ -5,6 +5,7 @@ using Godot;
 
 /// <summary>
 /// A 16x16x16 block chunk. Manages block storage, mesh rendering.
+/// Collision is optional — only created for chunks near the camera (performance optimization).
 /// </summary>
 [Tool]
 public partial class Chunk : Node3D
@@ -16,11 +17,21 @@ public partial class Chunk : Node3D
     private StaticBody3D _staticBody;
     private CollisionShape3D _collisionShape;
     private bool _isEmpty = true;
+    private bool _hasCollision;
+
+    // Cached collision faces for deferred EnableCollision() calls.
+    // Stored when mesh is generated without collision, applied when collision is enabled later.
+    private Vector3[] _lastCollisionFaces;
 
     public Vector3I ChunkCoord { get; private set; }
     public bool IsDirty { get; private set; }
+    public bool HasCollision => _hasCollision;
 
-    public void Initialize(Vector3I chunkCoord)
+    /// <summary>
+    /// Initialize the chunk. withCollision=false skips creating StaticBody3D + CollisionShape3D
+    /// entirely, saving 2 scene nodes per chunk. Distant chunks don't need collision.
+    /// </summary>
+    public void Initialize(Vector3I chunkCoord, bool withCollision = true)
     {
         ChunkCoord = chunkCoord;
         Position = new Vector3(chunkCoord.X * SIZE, chunkCoord.Y * SIZE, chunkCoord.Z * SIZE);
@@ -30,16 +41,63 @@ public partial class Chunk : Node3D
         _meshInstance.Name = "MeshInstance";
         AddChild(_meshInstance);
 
+        _hasCollision = withCollision;
+        if (withCollision)
+        {
+            CreateCollisionNodes();
+        }
+
+        // IMPORTANT: Do NOT set Owner = EditedSceneRoot on these children.
+        // Setting Owner causes Godot to serialize ALL chunk nodes into main.tscn,
+        // bloating the scene file and breaking CharacterBody3D physics (lesson 5.3).
+    }
+
+    /// <summary>
+    /// Enable collision on this chunk (creates StaticBody3D + CollisionShape3D).
+    /// If mesh data has been applied, the cached collision faces are used immediately.
+    /// </summary>
+    public void EnableCollision()
+    {
+        if (_hasCollision) return;
+        _hasCollision = true;
+
+        CreateCollisionNodes();
+
+        // Apply cached collision faces if we have them
+        if (_lastCollisionFaces != null && _lastCollisionFaces.Length > 0)
+        {
+            var shape = new ConcavePolygonShape3D();
+            shape.SetFaces(_lastCollisionFaces);
+            _collisionShape.Shape = shape;
+        }
+    }
+
+    /// <summary>
+    /// Disable collision on this chunk (removes and frees StaticBody3D + CollisionShape3D).
+    /// Saves 2 scene nodes and removes the chunk from the physics broadphase.
+    /// </summary>
+    public void DisableCollision()
+    {
+        if (!_hasCollision) return;
+        _hasCollision = false;
+
+        if (_staticBody != null)
+        {
+            RemoveChild(_staticBody);
+            _staticBody.QueueFree();
+            _staticBody = null;
+            _collisionShape = null;
+        }
+    }
+
+    private void CreateCollisionNodes()
+    {
         _staticBody = new StaticBody3D();
         _staticBody.Name = "StaticBody";
         AddChild(_staticBody);
         _collisionShape = new CollisionShape3D();
         _collisionShape.Name = "CollisionShape";
         _staticBody.AddChild(_collisionShape);
-
-        // IMPORTANT: Do NOT set Owner = EditedSceneRoot on these children.
-        // Setting Owner causes Godot to serialize ALL chunk nodes into main.tscn,
-        // bloating the scene file and breaking CharacterBody3D physics (lesson 5.3).
     }
 
     /// <summary>
@@ -66,13 +124,24 @@ public partial class Chunk : Node3D
     }
 
     /// <summary>
-    /// Returns a copy of the block data array. Used to cache modified chunks on unload.
+    /// Returns a copy of the block data array. Used to cache dirty chunks on unload
+    /// (copy needed because blocks may be modified later).
     /// </summary>
     public BlockType[,,] GetBlockData()
     {
         var copy = new BlockType[SIZE, SIZE, SIZE];
         Array.Copy(_blocks, copy, _blocks.Length);
         return copy;
+    }
+
+    /// <summary>
+    /// Returns a direct reference to the block data array (no copy).
+    /// Used to cache clean (non-dirty) chunks on unload — avoids allocation.
+    /// Safe because clean chunks won't be modified after unload.
+    /// </summary>
+    public BlockType[,,] GetBlockDataRef()
+    {
+        return _blocks;
     }
 
     /// <summary>
@@ -96,7 +165,9 @@ public partial class Chunk : Node3D
         if (_isEmpty)
         {
             _meshInstance.Mesh = null;
-            _collisionShape.Shape = null;
+            if (_hasCollision && _collisionShape != null)
+                _collisionShape.Shape = null;
+            _lastCollisionFaces = null;
             return;
         }
 
@@ -108,27 +179,37 @@ public partial class Chunk : Node3D
     /// <summary>
     /// Apply pre-computed mesh data to the Godot scene objects. MUST be called on the main thread.
     /// Used both by GenerateMesh() (synchronous) and the background pipeline (deferred apply).
+    /// Collision faces are cached so EnableCollision() can apply them later.
     /// </summary>
     public void ApplyMeshData(ChunkMeshGenerator.ChunkMeshData meshData)
     {
         if (meshData.IsEmpty || meshData.Surfaces.Length == 0)
         {
             _meshInstance.Mesh = null;
-            _collisionShape.Shape = null;
+            if (_hasCollision && _collisionShape != null)
+                _collisionShape.Shape = null;
+            _lastCollisionFaces = null;
             return;
         }
 
         _meshInstance.Mesh = ChunkMeshGenerator.BuildArrayMesh(meshData.Surfaces);
 
-        if (meshData.CollisionFaces.Length > 0)
+        // Always cache collision faces (cheap — just a reference)
+        _lastCollisionFaces = meshData.CollisionFaces;
+
+        // Only create collision shape if collision is enabled for this chunk
+        if (_hasCollision && _collisionShape != null)
         {
-            var shape = new ConcavePolygonShape3D();
-            shape.SetFaces(meshData.CollisionFaces);
-            _collisionShape.Shape = shape;
-        }
-        else
-        {
-            _collisionShape.Shape = null;
+            if (meshData.CollisionFaces.Length > 0)
+            {
+                var shape = new ConcavePolygonShape3D();
+                shape.SetFaces(meshData.CollisionFaces);
+                _collisionShape.Shape = shape;
+            }
+            else
+            {
+                _collisionShape.Shape = null;
+            }
         }
     }
 

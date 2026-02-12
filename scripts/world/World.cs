@@ -46,8 +46,8 @@ public partial class World : Node3D
     // Godot objects (ArrayMesh, ConcavePolygonShape3D) created on main thread.
     private readonly ConcurrentQueue<MeshGenResult> _meshResults = new();
     private readonly HashSet<Vector3I> _meshing = new();  // coords currently being meshed in background
-    private const int MaxConcurrentMeshes = 8;  // max simultaneous background mesh jobs
-    private const int MaxMeshApplyPerFrame = 16;  // max mesh results applied per frame
+    private const int MaxConcurrentMeshes = 16;  // max simultaneous background mesh jobs
+    private const int MaxMeshApplyPerFrame = 24;  // max mesh results applied per frame
 
     private struct MeshGenResult
     {
@@ -56,7 +56,24 @@ public partial class World : Node3D
     }
 
     // Budget for Phase 1 (terrain result application)
-    private const int MaxApplyPerFrame = 16;
+    private const int MaxApplyPerFrame = 24;
+
+    // Collision optimization: only create collision shapes for chunks near the camera.
+    // Distant chunks need rendering but NOT collision (no player/colonist interaction).
+    // At render distance 20, this reduces collision shapes from ~13k to ~650.
+    private const int CollisionRadius = 4;  // chunks from camera XZ that get collision
+    private Vector2I _lastCollisionCenter;  // last camera chunk used for collision updates
+
+    /// <summary>
+    /// Check if a chunk coordinate is within collision radius of the current camera position.
+    /// </summary>
+    private bool IsWithinCollisionRadius(Vector3I coord)
+    {
+        if (!_lastCameraChunkXZ.HasValue) return true; // no camera yet, default to collision
+        int dx = Mathf.Abs(coord.X - _lastCameraChunkXZ.Value.X);
+        int dz = Mathf.Abs(coord.Z - _lastCameraChunkXZ.Value.Y);
+        return dx <= CollisionRadius && dz <= CollisionRadius;
+    }
 
     // Terrain prefetch cache: stores pre-generated block data for chunks beyond render
     // distance but within prefetch range. When a chunk enters render distance, its terrain
@@ -70,9 +87,11 @@ public partial class World : Node3D
     // Tracked so we don't re-generate them or re-queue them.
     private readonly HashSet<Vector3I> _emptyChunks = new();
 
-    // Modified chunk cache: stores block data for dirty chunks that were unloaded.
-    // On reload, cached data is used instead of regenerating from noise.
-    private readonly Dictionary<Vector3I, BlockType[,,]> _modifiedChunkCache = new();
+    // Unified chunk data cache: stores block data for ALL chunks on unload (when enabled).
+    // Dirty chunks get a copy (may be modified later), clean chunks share the reference (no copy).
+    // On reload, cached data is used instead of regenerating from noise — instant loading.
+    private readonly Dictionary<Vector3I, BlockType[,,]> _chunkDataCache = new();
+    private bool _cacheAllChunks = true;  // toggle: cache everything vs only dirty chunks
 
     /// <summary>
     /// Set the terrain generator externally (from Main, which owns the seed).
@@ -210,6 +229,24 @@ public partial class World : Node3D
 
         _lastCameraChunkXZ = cameraChunkXZ;
 
+        // Update collision: enable for chunks near camera, disable for distant ones.
+        // Only checks chunks that changed collision state (camera moved to a new chunk).
+        if (_lastCollisionCenter != cameraChunkXZ)
+        {
+            _lastCollisionCenter = cameraChunkXZ;
+            foreach (var (coord, chunk) in _chunks)
+            {
+                int dx = Mathf.Abs(coord.X - cameraChunkXZ.X);
+                int dz = Mathf.Abs(coord.Z - cameraChunkXZ.Y);
+                bool needsCollision = dx <= CollisionRadius && dz <= CollisionRadius;
+
+                if (needsCollision && !chunk.HasCollision)
+                    chunk.EnableCollision();
+                else if (!needsCollision && chunk.HasCollision)
+                    chunk.DisableCollision();
+            }
+        }
+
         // Queue chunks that need loading (skip already loaded and known-empty)
         for (int x = cameraChunkXZ.X - radius; x <= cameraChunkXZ.X + radius; x++)
         for (int z = cameraChunkXZ.Y - radius; z <= cameraChunkXZ.Y + radius; z++)
@@ -234,17 +271,34 @@ public partial class World : Node3D
         foreach (var coord in toUnload)
             UnloadChunk(coord);
 
-        // Also evict empty chunk records outside unload distance
+        // Evict empty chunk records and cached chunk data beyond 3x render radius.
+        // This prevents unbounded memory growth while keeping nearby chunks for instant reload.
+        int cacheEvictDist = radius * 3;
         var emptyToRemove = new List<Vector3I>();
         foreach (var coord in _emptyChunks)
         {
             int dx = Mathf.Abs(coord.X - cameraChunkXZ.X);
             int dz = Mathf.Abs(coord.Z - cameraChunkXZ.Y);
-            if (dx > unloadDist || dz > unloadDist)
+            if (dx > cacheEvictDist || dz > cacheEvictDist)
                 emptyToRemove.Add(coord);
         }
         foreach (var coord in emptyToRemove)
             _emptyChunks.Remove(coord);
+
+        // Evict cached chunk data beyond 3x render radius
+        var cacheToEvict = new List<Vector3I>();
+        foreach (var coord in _chunkDataCache.Keys)
+        {
+            int dx = Mathf.Abs(coord.X - cameraChunkXZ.X);
+            int dz = Mathf.Abs(coord.Z - cameraChunkXZ.Y);
+            if (dx > cacheEvictDist || dz > cacheEvictDist)
+                cacheToEvict.Add(coord);
+        }
+        foreach (var coord in cacheToEvict)
+            _chunkDataCache.Remove(coord);
+
+        if (cacheToEvict.Count > 0)
+            GD.Print($"Evicted {cacheToEvict.Count} cached chunks ({_chunkDataCache.Count} remain)");
 
         // Cancel in-flight background generation for chunks that are now out of range
         var toCancel = new List<Vector3I>();
@@ -263,7 +317,7 @@ public partial class World : Node3D
 
         int totalUnloaded = toUnload.Count + toCancel.Count;
         if (totalUnloaded > 0)
-            GD.Print($"Unloaded {toUnload.Count} chunks, cancelled {toCancel.Count} generating");
+            GD.Print($"Unloaded {toUnload.Count} chunks, cancelled {toCancel.Count} generating ({_chunkDataCache.Count} cached)");
 
         // Evict terrain cache entries that are far beyond prefetch range
         int prefetchDist = radius + PrefetchRingWidth;
@@ -329,7 +383,7 @@ public partial class World : Node3D
             var chunk = new Chunk();
             AddChild(chunk);
             // Do NOT set chunk.Owner — prevents scene file bloat (lesson 5.3)
-            chunk.Initialize(result.Coord);
+            chunk.Initialize(result.Coord, IsWithinCollisionRadius(result.Coord));
             chunk.SetBlockData(result.Blocks);
             _chunks[result.Coord] = chunk;
             applied++;
@@ -401,7 +455,7 @@ public partial class World : Node3D
         // Phase 3: Load chunks from queue. Check caches first (instant), then dispatch to thread pool.
         if (_loadQueue.Count == 0) return;
 
-        int budget = _loadQueue.Count > 100 ? MaxConcurrentGens * 4 : MaxConcurrentGens;
+        int budget = _loadQueue.Count > 100 ? MaxConcurrentGens * 6 : MaxConcurrentGens;
         int cacheHits = 0;
 
         while (_loadQueue.Count > 0 && _generating.Count < budget)
@@ -410,20 +464,20 @@ public partial class World : Node3D
             if (_chunks.ContainsKey(coord) || _generating.Contains(coord)
                 || _emptyChunks.Contains(coord)) continue;
 
-            // Priority 1: Modified chunk cache (player-edited blocks)
-            if (_modifiedChunkCache.TryGetValue(coord, out var cachedBlocks))
+            // Priority 1: Chunk data cache (previously generated/modified chunks)
+            if (_chunkDataCache.TryGetValue(coord, out var cachedBlocks))
             {
-                _modifiedChunkCache.Remove(coord);
+                _chunkDataCache.Remove(coord);
                 var chunk = new Chunk();
                 AddChild(chunk);
                 if (Engine.IsEditorHint())
                     chunk.Owner = GetTree().EditedSceneRoot;
-                chunk.Initialize(coord);
+                chunk.Initialize(coord, IsWithinCollisionRadius(coord));
                 chunk.SetBlockData(cachedBlocks);
                 _chunks[coord] = chunk;
                 QueueMeshGeneration(coord);
                 QueueNeighborMeshes(coord);
-                GD.Print($"Restored modified chunk {coord} from cache");
+                cacheHits++;
                 continue;
             }
 
@@ -452,7 +506,7 @@ public partial class World : Node3D
                 AddChild(chunk);
                 if (Engine.IsEditorHint())
                     chunk.Owner = GetTree().EditedSceneRoot;
-                chunk.Initialize(coord);
+                chunk.Initialize(coord, IsWithinCollisionRadius(coord));
                 chunk.SetBlockData(prefetchedBlocks);
                 _chunks[coord] = chunk;
                 QueueMeshGeneration(coord);
@@ -491,7 +545,7 @@ public partial class World : Node3D
         }
 
         if (cacheHits > 0)
-            GD.Print($"Prefetch cache hits: {cacheHits} chunks loaded instantly ({_terrainCache.Count} cached)");
+            GD.Print($"Cache hits: {cacheHits} chunks loaded instantly ({_chunkDataCache.Count} data cached, {_terrainCache.Count} prefetched)");
     }
 
     /// <summary>
@@ -522,8 +576,13 @@ public partial class World : Node3D
 
         if (chunk.IsDirty)
         {
-            _modifiedChunkCache[coord] = chunk.GetBlockData();
-            GD.Print($"Cached modified chunk {coord} ({_modifiedChunkCache.Count} cached total)");
+            // Dirty: copy the block data (may be modified later by player)
+            _chunkDataCache[coord] = chunk.GetBlockData();
+        }
+        else if (_cacheAllChunks)
+        {
+            // Clean: share the reference directly (no allocation)
+            _chunkDataCache[coord] = chunk.GetBlockDataRef();
         }
 
         _chunks.Remove(coord);
@@ -545,15 +604,15 @@ public partial class World : Node3D
         AddChild(chunk);
         if (Engine.IsEditorHint())
             chunk.Owner = GetTree().EditedSceneRoot;
-        chunk.Initialize(chunkCoord);
+        chunk.Initialize(chunkCoord, IsWithinCollisionRadius(chunkCoord));
         _chunks[chunkCoord] = chunk;
 
-        // Restore from cache if this chunk was previously modified, otherwise generate from noise
-        if (_modifiedChunkCache.TryGetValue(chunkCoord, out var cachedBlocks))
+        // Restore from cache if this chunk was previously cached, otherwise generate from noise
+        if (_chunkDataCache.TryGetValue(chunkCoord, out var cachedBlocks))
         {
             chunk.SetBlockData(cachedBlocks);
-            _modifiedChunkCache.Remove(chunkCoord);
-            GD.Print($"Restored modified chunk {chunkCoord} from cache");
+            _chunkDataCache.Remove(chunkCoord);
+            GD.Print($"Restored chunk {chunkCoord} from cache");
         }
         else
         {
@@ -706,7 +765,7 @@ public partial class World : Node3D
                 if (_terrainCache.ContainsKey(coord)) continue;
                 if (_generating.Contains(coord)) continue;
                 if (_prefetching.Contains(coord)) continue;
-                if (_modifiedChunkCache.ContainsKey(coord)) continue;
+                if (_chunkDataCache.ContainsKey(coord)) continue;
 
                 _prefetching.Add(coord);
                 dispatched++;

@@ -56,11 +56,21 @@ Why ArrayMesh works:
 
 **Chunk size: 16x16x16 blocks.** This is a standard choice that balances mesh rebuild cost vs. chunk count.
 
-### 3.2 Collision: ConcavePolygonShape3D Per Chunk
+### 3.2 Collision: Distance-Based ConcavePolygonShape3D
 
-Each chunk gets its own `StaticBody3D` with a `ConcavePolygonShape3D`. The collision mesh is built from the same vertex data as the render mesh, expanded from indexed triangles to a flat vertex list (ConcavePolygonShape3D requires sequential vertex triples, not indexed buffers).
+Chunks use `StaticBody3D` with `ConcavePolygonShape3D` for collision, but **only within a short radius of the camera** (`CollisionRadius = 4` chunks = 64 blocks). Distant chunks need rendering but NOT collision — the colonist and raycasts are always near the camera.
 
-Regenerate collision whenever the render mesh changes.
+**How it works:**
+- `Chunk.Initialize(coord, withCollision)` accepts a flag. When `withCollision=false`, no `StaticBody3D` or `CollisionShape3D` nodes are created (saves 2 scene nodes per chunk).
+- `Chunk.EnableCollision()` / `DisableCollision()` add/remove collision nodes at runtime as chunks move in/out of collision range.
+- Collision mesh faces are always cached in `_lastCollisionFaces` when mesh data is applied, so `EnableCollision()` can apply them instantly without re-meshing.
+- `World.UpdateLoadedChunks()` includes a collision update pass that iterates loaded chunks and enables/disables collision based on XZ distance from the camera chunk.
+
+**Impact at render distance 20:** 13,448 total chunks, but only ~648 have collision (81 horizontal × 8 Y layers within radius 4). This removes ~25,600 scene nodes and reduces physics broadphase processing by ~95%.
+
+**Future consideration:** When colonists operate outside camera range (autonomous jobs), they may need collision in their area. Options include abstract simulation (no physics) or local collision zones around each colonist. This is deferred to the multi-colonist phase.
+
+The collision mesh is built from the same vertex data as the render mesh, expanded from indexed triangles to a flat vertex list (ConcavePolygonShape3D requires sequential vertex triples, not indexed buffers). Regenerate collision whenever the render mesh changes.
 
 ### 3.3 Navigation: Voxel Grid A* (NOT NavigationServer3D)
 
@@ -111,13 +121,13 @@ Add **stuck detection**: if the colonist makes no progress for ~2 seconds, clear
 
 Chunks load/unload dynamically based on camera position with a **four-phase pipeline** inside `ProcessLoadQueue()`:
 
-**Phase 1 — Apply terrain results (budgeted):** Background threads post completed `ChunkGenResult` structs to a `ConcurrentQueue`. Phase 1 dequeues these, creates Godot scene nodes (`Chunk` + `MeshInstance3D` + `StaticBody3D` + `CollisionShape3D`), and queues the chunk + its 6 neighbors for mesh generation. Budgeted to `MaxApplyPerFrame` (16) to prevent frame spikes when many results arrive at once. Overflow results are re-enqueued for the next frame.
+**Phase 1 — Apply terrain results (budgeted):** Background threads post completed `ChunkGenResult` structs to a `ConcurrentQueue`. Phase 1 dequeues these, creates Godot scene nodes (`Chunk` + `MeshInstance3D`, and conditionally `StaticBody3D` + `CollisionShape3D` only if within `CollisionRadius`), and queues the chunk + its 6 neighbors for mesh generation. Budgeted to `MaxApplyPerFrame` (24) to prevent frame spikes when many results arrive at once. Overflow results are re-enqueued for the next frame.
 
-**Phase 2 — Dispatch background mesh generation:** Chunks from the mesh queue are dispatched to the .NET thread pool for greedy meshing. Before dispatch, the main thread snapshots neighbor boundary data via `MakeSnapshotNeighborCallback()` — 6 flat arrays of 16×16 blocks, one per face-adjacent neighbor. The returned callback reads from these snapshots, making it safe to call from any thread. Up to `MaxConcurrentMeshes` (8) mesh jobs run concurrently. `GenerateMeshData()` (~13ms per chunk) runs entirely off the main thread.
+**Phase 2 — Dispatch background mesh generation:** Chunks from the mesh queue are dispatched to the .NET thread pool for greedy meshing. Before dispatch, the main thread snapshots neighbor boundary data via `MakeSnapshotNeighborCallback()` — 6 flat arrays of 16×16 blocks, one per face-adjacent neighbor. The returned callback reads from these snapshots, making it safe to call from any thread. Up to `MaxConcurrentMeshes` (16) mesh jobs run concurrently. `GenerateMeshData()` (~13ms per chunk) runs entirely off the main thread.
 
-**Phase 2b — Apply mesh results:** Completed `MeshGenResult` structs are dequeued from `_meshResults` (`ConcurrentQueue`). `Chunk.ApplyMeshData()` creates Godot objects (`BuildArrayMesh()` + `ConcavePolygonShape3D`) on the main thread — this is fast (~1ms per chunk). Up to `MaxMeshApplyPerFrame` (16) results applied per frame.
+**Phase 2b — Apply mesh results:** Completed `MeshGenResult` structs are dequeued from `_meshResults` (`ConcurrentQueue`). `Chunk.ApplyMeshData()` creates Godot objects (`BuildArrayMesh()` + optionally `ConcavePolygonShape3D` if collision enabled) on the main thread — this is fast (~1ms per chunk). Up to `MaxMeshApplyPerFrame` (24) results applied per frame.
 
-**Phase 3 — Dispatch terrain generation:** New chunks are dequeued from the load queue. Modified chunk cache and terrain prefetch cache are checked first (instant restore). Otherwise, `Task.Run()` dispatches `TerrainGenerator.GenerateChunkBlocks()` to the .NET thread pool. Up to `MaxConcurrentGens` (8, or 32 during large queue bursts) chunks generate concurrently.
+**Phase 3 — Dispatch terrain generation:** New chunks are dequeued from the load queue. Chunk data cache (all previously-loaded chunks) and terrain prefetch cache are checked first (instant restore). Otherwise, `Task.Run()` dispatches `TerrainGenerator.GenerateChunkBlocks()` to the .NET thread pool. Up to `MaxConcurrentGens` (8, or 48 during large queue bursts) chunks generate concurrently.
 
 **Terrain prefetch ring:** `DispatchPrefetch()` pre-generates terrain for chunks within `renderRadius + PrefetchRingWidth` (3) but beyond render distance. Results are stored in a `ConcurrentDictionary<Vector3I, BlockType[,,]>` terrain cache. When the camera pans and these chunks enter render distance, their terrain data is instantly available — no thread pool wait. Up to 8 prefetches dispatched per frame. Stale cache entries and in-flight prefetches are evicted when the camera moves away.
 
@@ -134,15 +144,21 @@ Chunks load/unload dynamically based on camera position with a **four-phase pipe
 
 **Background mesh generation with neighbor snapshots:** The earlier approach of main-thread meshing (see lesson 5.4) was a bottleneck — each chunk took ~13ms, and with 800+ in the mesh queue, initial loading took ~13 seconds at 1 chunk/frame. The solution was `MakeSnapshotNeighborCallback()`: before dispatching, the main thread copies the 16×16 boundary face of each neighbor into 6 flat arrays. This works because by the time the mesh queue processes chunks, their neighbors are already loaded (terrain generation completes first). The snapshot approach avoids the original artifact problem documented in lesson 5.4 because it only dispatches when neighbor data actually exists.
 
-### 3.6 Dirty Chunk Caching
+### 3.6 Chunk Data Caching
 
-Modified chunks are preserved across unload/reload cycles:
-- `Chunk.IsDirty` flag is set whenever `SetBlock()` modifies a block
-- On unload, dirty chunks save a copy of their block data to `World._modifiedChunkCache` (`Dictionary<Vector3I, BlockType[,,]>`)
-- On reload, the cache is checked first — cached data is restored instead of regenerating from noise
-- Unmodified chunks are never cached; they regenerate deterministically from the seed
+ALL generated chunks are cached in memory on unload (toggleable via `_cacheAllChunks`, default true). This makes revisiting previously-explored areas instant — no re-generation from noise.
 
-This is an **in-memory cache only** — modifications are lost when the game restarts. Disk persistence is a future feature.
+**How it works:**
+- `World._chunkDataCache` (`Dictionary<Vector3I, BlockType[,,]>`) stores block data for every unloaded chunk
+- Dirty chunks (player-modified) store a **copy** via `GetBlockData()` — protects against mutation
+- Clean chunks store a **direct reference** via `GetBlockDataRef()` — zero allocation, safe because the chunk node is freed
+- On reload, the cache is checked first (Priority 1 in Phase 3) — cached data restored instantly
+- Cache eviction at **3x render radius** prevents unbounded memory growth
+- Empty chunk records (`_emptyChunks`) also evict at 3x render radius
+
+**Fallback:** When `_cacheAllChunks` is false, only dirty chunks are cached (original behavior). Clean chunks regenerate deterministically from the seed.
+
+This is an **in-memory cache only** — all data is lost when the game restarts. Disk persistence is a future feature.
 
 ### 3.7 Terrain Generation
 
@@ -153,7 +169,7 @@ Multi-layer noise terrain using 5 `FastNoiseLite` layers:
 - **River** (freq 0.005): rivers form where `abs(noise) ≈ 0`, only in non-mountainous terrain above water level
 - **Temperature** (freq 0.004) and **Moisture** (freq 0.005): drive biome classification
 
-Height range: 0-62 across multiple Y chunk layers (default 4 layers = 64 blocks tall). Water level: 25.
+Height range: 0-90 across multiple Y chunk layers (default 8 layers = 128 blocks tall). Water level: 25. Tall terrain (base 50-70, amplitude 5-20) creates 45-65 blocks of underground stone for deep cave networks. Snow caps on mountains at height >= 82.
 
 **Biome system:** 6 biomes (Grassland, Forest, Desert, Tundra, Swamp, Mountains) selected by temperature, moisture, and continentalness. Each biome has distinct surface/subsurface blocks, height offsets, amplitude scales, and detail scales defined in `BiomeTable`. Biome boundaries use weighted blending of the 4 nearest biome heights (by Euclidean distance in temp/moisture space) to avoid hard terrain seams. See `Biome.cs` for definitions and `TerrainGenerator.cs` for blending logic.
 
@@ -199,12 +215,20 @@ Deterministic grid-based tree placement integrated into `TerrainGenerator.Genera
 
 ### 3.10 Cave Generation
 
-Dual-threshold 3D noise ("spaghetti caves") creates winding tunnel networks underground. Two independent `FastNoiseLite` 3D simplex noise fields with very different frequencies (0.02 and 0.06, 2 FBM octaves, seeds `seed+600` and `seed+700`) are evaluated at every solid block position. A block is carved to Air where `abs(noise1) < 0.07 AND abs(noise2) < 0.07`. The key to spaghetti (not Swiss cheese): tight thresholds (~2% block carve rate), very different frequencies (broad surface × fine surface = elongated tube intersections), and Y-axis squashing (YSquash=0.5 makes tunnels prefer horizontal).
+Three-layer Minecraft-inspired cave system combined with OR logic (any system can independently carve):
+
+**Spaghetti tunnels:** Two independent 1-octave (`FractalType.None`) 3D simplex noise fields with 1:6 frequency ratio (0.01 and 0.06). A block is carved where `abs(noise1) < 0.10 AND abs(noise2) < 0.08`. Critical: 1-octave noise produces smooth continuous isosurfaces — FBM fragments them into disconnected pockets. Asymmetric thresholds. Y-squash (0.5) makes tunnels prefer horizontal. Carved volume ≈ 3.2%.
+
+**Cheese caverns:** Ridged-noise field (freq 0.018, 1 ridged octave, seed+900) creates larger open chambers very deep underground (25+ blocks below surface). Depth-scaled threshold: Lerp(0.85, 0.62) from 25→50 blocks depth — deeper = bigger caverns. Heavy Y-squash (0.35) makes caverns wide and flat.
+
+**Noodle tunnels:** Very thin connecting passages (freq 0.03/0.09, thresholds 0.05/0.05) only 15+ blocks below surface. Connect the spaghetti and cavern networks.
+
+**Cave entrances:** 2D noise (freq 0.008, threshold 0.52) punches clearly visible holes through surface protection, creating openings players can spot from above. Only above WaterLevel+3.
 
 **Safety rules:**
-- **Surface protection:** No caves within `CaveMinDepth=4` blocks of surface. Caves fade in over `CaveFadeRange=8` blocks below that (depth-scaled thresholds = more caves deeper underground).
+- **Surface protection:** No caves within `CaveMinDepth=15` blocks of surface — colonists must mine down to reach caves. Caves fade in over `CaveFadeRange=10` blocks below that.
 - **Floor protection:** No carving at `worldY <= 2` (bedrock).
-- **Water protection:** No carving at `worldY <= WaterLevel` (prevents underwater air pockets).
+- **No water protection:** Caves extend below water level into deep stone for impressive deep networks.
 
 **Integration:** `CaveGenerator.CarveCaves()` is called in `TerrainGenerator.GenerateChunkBlocks()` after terrain fill but before tree placement. Surface heights are cached per-column in a `[ThreadStatic]` array and passed to the cave generator. Caves are fully deterministic — same seed = same caves. No cross-chunk coordination needed.
 
@@ -340,7 +364,7 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 10 | RTS camera (WASD pan, scroll zoom, middle-mouse rotate) | Done |
 | 11 | Vertical chunks (configurable Y layers, 64-block default height) | Done |
 | 12 | Chunk streaming (camera-based load/unload, 16/frame budget) | Done |
-| 13 | Dirty chunk caching (in-memory preservation of modified chunks) | Done |
+| 13 | Chunk data caching (in-memory cache of ALL chunks, eviction at 3x radius) | Done |
 | 14 | Biome system (6 biomes, temperature/moisture noise, height blending) | Done |
 | 15 | Greedy meshing (Mikola Lysenko algorithm, up to 256× triangle reduction) | Done |
 | 16 | Threaded chunk generation (background terrain gen, budgeted main-thread mesh) | Done |
@@ -349,6 +373,7 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 19 | Background mesh generation (threaded greedy meshing, neighbor snapshots, softer lighting) | Done |
 | 20 | Cave generation (dual-threshold 3D noise spaghetti caves, depth-scaled) | Done |
 | 21 | Y-level camera slicing (shader-based Y-clip, Page Up/Down controls, raycast pierce) | Done |
+| 22 | Performance: distance-based collision, increased pipeline throughput, reduced shadows | Done |
 
 ### Future Phases (not yet planned in detail):
 - Multiple colonists
@@ -376,8 +401,8 @@ colonysim-3d/
 ├── scripts/
 │   ├── Main.cs                           # Entry point, world setup, camera/colonist spawn
 │   ├── world/
-│   │   ├── World.cs                      # Chunk manager, streaming, dirty cache, block access
-│   │   ├── Chunk.cs                      # 16x16x16 block storage, mesh, collision, dirty flag
+│   │   ├── World.cs                      # Chunk manager, streaming, chunk cache, collision radius
+│   │   ├── Chunk.cs                      # 16x16x16 block storage, mesh, distance-based collision
 │   │   ├── ChunkMeshGenerator.cs         # Greedy meshing ArrayMesh + collision generation
 │   │   ├── TerrainGenerator.cs           # 5-layer FastNoiseLite terrain + biomes + rivers
 │   │   ├── TreeGenerator.cs              # Deterministic grid-based tree placement
@@ -431,19 +456,23 @@ colonysim-3d/
 
 15. **Move expensive computation off the main thread.** Greedy meshing (~13ms/chunk) should run on background threads, not the main thread with a time budget. The time budget approach only processes 1 chunk/frame when each chunk exceeds the budget, creating massive backlogs. Use `MakeSnapshotNeighborCallback()` to capture neighbor boundary data before dispatch so background threads have correct data without accessing shared state.
 
-16. **Skip empty chunks entirely.** Upper Y layers are almost always 100% air. Tracking them in a `HashSet<Vector3I>` instead of creating full Godot node hierarchies (`Chunk` → `MeshInstance3D` → `StaticBody3D` → `CollisionShape3D`) eliminates ~50% of scene tree overhead during streaming.
+16. **Skip empty chunks entirely.** Upper Y layers are almost always 100% air. Tracking them in a `HashSet<Vector3I>` instead of creating Godot node hierarchies eliminates ~50% of scene tree overhead during streaming. Non-empty chunks outside `CollisionRadius` only create 2 nodes (`Chunk` → `MeshInstance3D`) instead of 4, further reducing overhead.
 
-17. **Tree generation is deterministic — no special caching needed.** Trees are placed via `PositionHash(worldX, worldZ, seed)` during terrain generation. When a chunk unloads and reloads, identical trees regenerate from the same seed. Only player-modified chunks (with trees mined) need caching, handled by the existing dirty chunk cache.
+17. **Tree generation is deterministic — no special caching needed.** Trees are placed via `PositionHash(worldX, worldZ, seed)` during terrain generation. When a chunk unloads and reloads, identical trees regenerate from the same seed. With `_cacheAllChunks` enabled, chunks are cached on unload for instant reload regardless.
 
 18. **Chunk materials use ShaderMaterial, not StandardMaterial3D.** All chunk meshes use custom `.gdshader` files for Y-level slice support. The shaders replicate the same vertex-color lit appearance as `StandardMaterial3D` but add global uniform-based fragment discard for slicing. Lazy-loaded via static properties in `ChunkMeshGenerator`.
 
-19. **Cave generation is deterministic — same as trees.** Caves are carved via 3D noise evaluation at world coordinates. When a chunk unloads and reloads, identical caves regenerate. Only player-modified chunks need caching.
+19. **Cave generation is deterministic — same as trees.** Caves are carved via 3D noise evaluation at world coordinates. When a chunk unloads and reloads, identical caves regenerate. With `_cacheAllChunks` enabled, chunks are cached on unload for instant reload regardless.
 
 20. **Global shader uniforms must be declared in project.godot.** The `[shader_globals]` section defines `slice_y_level` and `slice_enabled`. Without this declaration, `RenderingServer.GlobalShaderParameterSet()` calls are silently ignored.
 
 21. **Godot shader `fragment()` does not allow `return` statements.** Use `if/else` branching with `discard` instead. Also, compound boolean expressions mixing `bool` and float comparisons (e.g., `slice_enabled && world_position.y > level`) may fail to compile — use nested `if` blocks instead.
 
 22. **Y-level slice cross-section tint must use NORMAL to avoid side walls.** The first attempt tinted ALL fragments within 1 block of the slice level, creating ugly dark blobs on side walls and cliffs. The correct approach: only tint upward-facing surfaces (NORMAL.y > 0.5) so only the "floor plan" cut surface gets the darkening effect.
+
+23. **ConcavePolygonShape3D is extremely expensive for the physics broadphase.** At render distance 20 (13,448 chunks), having collision on every chunk tanks FPS because Jolt processes all shapes every physics frame. Use distance-based collision (`CollisionRadius = 4`) — only chunks near the camera need collision. Distant chunks only need rendering (Godot auto-frustum-culls `MeshInstance3D` nodes). When adding colonist simulation outside camera range, consider abstract pathfinding without physics collision.
+
+24. **Chunk collision faces are cached separately from the mesh.** `_lastCollisionFaces` stores the raw `Vector3[]` from mesh generation. This allows `EnableCollision()` to apply collision data without re-running greedy meshing. The cache is a reference (not copy) — cheap to store.
 
 ---
 
@@ -488,8 +517,8 @@ You cannot run the Godot project yourself. The **user** runs the game and report
 **Use `GD.Print()` liberally.** Every significant action should log to the Godot console so the user can confirm behavior without reading code. Examples:
 
 - Chunk loaded: `"Loaded 16 chunks (48 remaining)"`
-- Chunk cached: `"Cached modified chunk (3, 0, 5) (2 cached total)"`
-- Chunk restored: `"Restored modified chunk (3, 0, 5) from cache"`
+- Chunk unloaded: `"Unloaded 32 chunks, cancelled 0 generating (128 cached)"`
+- Chunk restored: `"Cache hits: 16 chunks loaded instantly (128 data cached, 0 prefetched)"`
 - Chunk unloaded: `"Unloaded 32 chunks"`
 - Block modified: `"Removed block at (19, 7, 28) — was Grass"`
 - Path found: `"Colonist: path set, 14 waypoints"`
