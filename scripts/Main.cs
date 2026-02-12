@@ -67,7 +67,7 @@ public partial class Main : Node3D
             var blockInteraction = new BlockInteraction();
             blockInteraction.Name = "BlockInteraction";
             AddChild(blockInteraction);
-            blockInteraction.Initialize(camera, _world, colonist);
+            blockInteraction.Initialize(camera, _world, colonist, ChunkRenderDistance);
 
             // Increase shadow distance for taller terrain
             var light = GetNodeOrNull<DirectionalLight3D>("DirectionalLight3D");

@@ -11,14 +11,15 @@ public partial class BlockInteraction : Node
     private Camera3D _camera;
     private World _world;
     private Colonist _colonist;
-    private const float RayLength = 200.0f;
+    private float _rayLength = 200.0f;
 
-    public void Initialize(Camera3D camera, World world, Colonist colonist)
+    public void Initialize(Camera3D camera, World world, Colonist colonist, int chunkRenderDistance = 5)
     {
         _camera = camera;
         _world = world;
         _colonist = colonist;
-        GD.Print("BlockInteraction initialized");
+        _rayLength = (2 * chunkRenderDistance + 1) * Chunk.SIZE;
+        GD.Print($"BlockInteraction initialized (ray length={_rayLength})");
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -43,7 +44,7 @@ public partial class BlockInteraction : Node
         if (_camera == null || _colonist == null) return;
 
         var from = _camera.ProjectRayOrigin(screenPos);
-        var to = from + _camera.ProjectRayNormal(screenPos) * RayLength;
+        var to = from + _camera.ProjectRayNormal(screenPos) * _rayLength;
 
         var spaceState = _camera.GetWorld3D().DirectSpaceState;
         var query = PhysicsRayQueryParameters3D.Create(from, to);
@@ -61,7 +62,7 @@ public partial class BlockInteraction : Node
         if (_camera == null || _world == null) return;
 
         var from = _camera.ProjectRayOrigin(screenPos);
-        var to = from + _camera.ProjectRayNormal(screenPos) * RayLength;
+        var to = from + _camera.ProjectRayNormal(screenPos) * _rayLength;
 
         var spaceState = _camera.GetWorld3D().DirectSpaceState;
         var query = PhysicsRayQueryParameters3D.Create(from, to);

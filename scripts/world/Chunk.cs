@@ -18,6 +18,7 @@ public partial class Chunk : Node3D
     private bool _isEmpty = true;
 
     public Vector3I ChunkCoord { get; private set; }
+    public bool IsDirty { get; private set; }
 
     public void Initialize(Vector3I chunkCoord)
     {
@@ -66,6 +67,17 @@ public partial class Chunk : Node3D
         if (localX < 0 || localX >= SIZE || localY < 0 || localY >= SIZE || localZ < 0 || localZ >= SIZE)
             return;
         _blocks[localX, localY, localZ] = type;
+        IsDirty = true;
+    }
+
+    /// <summary>
+    /// Returns a copy of the block data array. Used to cache modified chunks on unload.
+    /// </summary>
+    public BlockType[,,] GetBlockData()
+    {
+        var copy = new BlockType[SIZE, SIZE, SIZE];
+        Array.Copy(_blocks, copy, _blocks.Length);
+        return copy;
     }
 
     /// <summary>

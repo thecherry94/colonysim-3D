@@ -21,6 +21,10 @@ public partial class World : Node3D
     private readonly Queue<Vector3I> _loadQueue = new();
     private const int ChunksPerFrame = 16;
 
+    // Modified chunk cache: stores block data for dirty chunks that were unloaded.
+    // On reload, cached data is used instead of regenerating from noise.
+    private readonly Dictionary<Vector3I, BlockType[,,]> _modifiedChunkCache = new();
+
     /// <summary>
     /// Set the terrain generator externally (from Main, which owns the seed).
     /// Must be called before LoadChunkArea().
@@ -216,6 +220,13 @@ public partial class World : Node3D
     private void UnloadChunk(Vector3I coord)
     {
         if (!_chunks.TryGetValue(coord, out var chunk)) return;
+
+        if (chunk.IsDirty)
+        {
+            _modifiedChunkCache[coord] = chunk.GetBlockData();
+            GD.Print($"Cached modified chunk {coord} ({_modifiedChunkCache.Count} cached total)");
+        }
+
         _chunks.Remove(coord);
         RemoveChild(chunk);
         chunk.QueueFree();
@@ -236,7 +247,17 @@ public partial class World : Node3D
         chunk.Initialize(chunkCoord);
         _chunks[chunkCoord] = chunk;
 
-        FillChunkTerrain(chunk, chunkCoord);
+        // Restore from cache if this chunk was previously modified, otherwise generate from noise
+        if (_modifiedChunkCache.TryGetValue(chunkCoord, out var cachedBlocks))
+        {
+            chunk.SetBlockData(cachedBlocks);
+            _modifiedChunkCache.Remove(chunkCoord);
+            GD.Print($"Restored modified chunk {chunkCoord} from cache");
+        }
+        else
+        {
+            FillChunkTerrain(chunk, chunkCoord);
+        }
     }
 
     private void FillChunkTerrain(Chunk chunk, Vector3I chunkCoord)
