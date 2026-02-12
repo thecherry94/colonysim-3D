@@ -193,10 +193,13 @@ public partial class World : Node3D
     {
         if (_loadQueue.Count == 0) return;
 
+        // Higher budget when queue is large (initial load) to fill world faster
+        int budget = _loadQueue.Count > 100 ? ChunksPerFrame * 8 : ChunksPerFrame;
+
         int loaded = 0;
         var newlyLoaded = new List<Vector3I>();
 
-        while (_loadQueue.Count > 0 && loaded < ChunksPerFrame)
+        while (_loadQueue.Count > 0 && loaded < budget)
         {
             var coord = _loadQueue.Dequeue();
             if (_chunks.ContainsKey(coord)) continue; // Already loaded (e.g. by initial burst)

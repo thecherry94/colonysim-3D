@@ -100,19 +100,19 @@ public class TerrainGenerator
         _riverNoise.Frequency = 0.005f;
         _riverNoise.FractalType = FastNoiseLite.FractalTypeEnum.None;
 
-        // Layer 5 — Temperature: broad climate zones
+        // Layer 5 — Temperature: very broad climate zones (~1000 blocks per transition)
         _temperatureNoise = new FastNoiseLite();
         _temperatureNoise.Seed = seed + 400;
         _temperatureNoise.NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth;
-        _temperatureNoise.Frequency = 0.002f;
+        _temperatureNoise.Frequency = 0.0008f;
         _temperatureNoise.FractalType = FastNoiseLite.FractalTypeEnum.Fbm;
         _temperatureNoise.FractalOctaves = 2;
 
-        // Layer 6 — Moisture: wet/dry variation
+        // Layer 6 — Moisture: very broad wet/dry zones
         _moistureNoise = new FastNoiseLite();
         _moistureNoise.Seed = seed + 500;
         _moistureNoise.NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth;
-        _moistureNoise.Frequency = 0.0025f;
+        _moistureNoise.Frequency = 0.001f;
         _moistureNoise.FractalType = FastNoiseLite.FractalTypeEnum.Fbm;
         _moistureNoise.FractalOctaves = 2;
 

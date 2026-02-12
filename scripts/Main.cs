@@ -155,13 +155,12 @@ public partial class Main : Node3D
         _world.SetTerrainGenerator(terrainGen);
         _world.SetYChunkLayers(ChunkYLayers);
 
-        // Load chunk grid: center chunk = (distance, 0, distance) so world starts at (0,0,0)
-        var center = new Vector3I(ChunkRenderDistance, 0, ChunkRenderDistance);
-        _world.LoadChunkArea(center, ChunkRenderDistance);
-
+        // Initial chunk loading is handled by the streaming system in _Process().
+        // LoadChunkArea() is no longer called — UpdateLoadedChunks() will load
+        // all needed chunks on the first frame based on camera position.
         int gridSize = 2 * ChunkRenderDistance + 1;
         int blockSpan = gridSize * Chunk.SIZE;
         int worldHeight = ChunkYLayers * Chunk.SIZE;
-        GD.Print($"World ready: {gridSize}x{gridSize} chunks, {ChunkYLayers} Y layers ({blockSpan}x{worldHeight}x{blockSpan} blocks)");
+        GD.Print($"World ready: streaming {gridSize}x{gridSize} chunks, {ChunkYLayers} Y layers ({blockSpan}x{worldHeight}x{blockSpan} blocks)");
     }
 }

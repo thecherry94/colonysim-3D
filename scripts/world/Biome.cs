@@ -45,11 +45,11 @@ public static class BiomeTable
     public static readonly BiomeData[] Biomes = new BiomeData[]
     {
         //                  Surface          SubSurface       Underwater       HeightOff  Amp   Detail
-        new BiomeData(BlockType.Grass,   BlockType.Dirt,  BlockType.Sand,     0f,  1.0f, 1.0f),  // Grassland
-        new BiomeData(BlockType.Grass,   BlockType.Dirt,  BlockType.Sand,     2f,  1.1f, 1.3f),  // Forest
-        new BiomeData(BlockType.RedSand, BlockType.Sand,  BlockType.Sand,    -2f,  0.6f, 0.3f),  // Desert
-        new BiomeData(BlockType.Snow,    BlockType.Dirt,  BlockType.Gravel,  -1f,  0.7f, 0.5f),  // Tundra
-        new BiomeData(BlockType.Grass,   BlockType.Clay,  BlockType.Clay,    -4f,  0.3f, 0.2f),  // Swamp
-        new BiomeData(BlockType.Stone,   BlockType.Stone, BlockType.Gravel,   8f,  1.8f, 1.5f),  // Mountains
+        new BiomeData(BlockType.Grass,   BlockType.Dirt,  BlockType.Sand,     0f,  0.3f, 0.2f),  // Grassland (flat plains)
+        new BiomeData(BlockType.Grass,   BlockType.Dirt,  BlockType.Sand,     2f,  0.8f, 1.0f),  // Forest (gentle hills)
+        new BiomeData(BlockType.RedSand, BlockType.Sand,  BlockType.Sand,    -2f,  0.4f, 0.2f),  // Desert (flat dunes)
+        new BiomeData(BlockType.Snow,    BlockType.Dirt,  BlockType.Gravel,  -1f,  0.5f, 0.3f),  // Tundra (gently rolling)
+        new BiomeData(BlockType.Grass,   BlockType.Clay,  BlockType.Clay,    -4f,  0.2f, 0.1f),  // Swamp (very flat, low)
+        new BiomeData(BlockType.Stone,   BlockType.Stone, BlockType.Gravel,   8f,  1.8f, 1.5f),  // Mountains (steep)
     };
 }
