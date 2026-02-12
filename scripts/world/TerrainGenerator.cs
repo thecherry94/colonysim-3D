@@ -23,6 +23,10 @@ public class TerrainGenerator
     private readonly FastNoiseLite _temperatureNoise;
     private readonly FastNoiseLite _moistureNoise;
     private readonly int _seed;
+    private readonly CaveGenerator _caveGenerator;
+
+    // Thread-local surface height cache for passing to CaveGenerator
+    [ThreadStatic] private static int[] _surfaceHeightCache;
 
     public const int WaterLevel = 25;
     public const int MaxHeight = 62;
@@ -119,7 +123,10 @@ public class TerrainGenerator
         _moistureNoise.FractalType = FastNoiseLite.FractalTypeEnum.Fbm;
         _moistureNoise.FractalOctaves = 2;
 
-        GD.Print($"TerrainGenerator initialized: seed={seed}, waterLevel={WaterLevel}, maxHeight={MaxHeight}, biomes=6, treeGrid={TreeGenerator.TreeGridSize}");
+        // Cave generator: dual-threshold 3D noise for spaghetti caves
+        _caveGenerator = new CaveGenerator(seed);
+
+        GD.Print($"TerrainGenerator initialized: seed={seed}, waterLevel={WaterLevel}, maxHeight={MaxHeight}, biomes=6, treeGrid={TreeGenerator.TreeGridSize}, caves=ON");
     }
 
     /// <summary>
@@ -281,6 +288,9 @@ public class TerrainGenerator
     {
         int chunkWorldYBase = chunkCoord.Y * Chunk.SIZE;
 
+        // Initialize thread-local surface height cache
+        _surfaceHeightCache ??= new int[Chunk.SIZE * Chunk.SIZE];
+
         for (int lx = 0; lx < Chunk.SIZE; lx++)
         for (int lz = 0; lz < Chunk.SIZE; lz++)
         {
@@ -291,6 +301,9 @@ public class TerrainGenerator
             int surfaceHeight = ComputeHeight(sample);
             BiomeType biome = ClassifyBiome(sample.TNorm, sample.MNorm, sample.CNorm);
             bool inRiver = IsRiverChannel(sample, surfaceHeight);
+
+            // Cache surface height for cave generator
+            _surfaceHeightCache[lx * Chunk.SIZE + lz] = surfaceHeight;
 
             for (int ly = 0; ly < Chunk.SIZE; ly++)
             {
@@ -324,7 +337,12 @@ public class TerrainGenerator
             }
         }
 
-        // Phase 2: Tree placement via deterministic grid cells.
+        // Phase 2: Cave carving — carve tunnels in solid underground blocks.
+        // Must happen AFTER terrain fill (needs solid blocks to carve)
+        // and BEFORE tree placement (trees shouldn't fill cave voids).
+        _caveGenerator.CarveCaves(blocks, chunkCoord, _surfaceHeightCache);
+
+        // Phase 3: Tree placement via deterministic grid cells.
         // Check all cells that could have trees reaching into this chunk.
         PlaceTreesInChunk(blocks, chunkCoord);
     }

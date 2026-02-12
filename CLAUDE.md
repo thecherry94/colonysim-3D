@@ -197,7 +197,38 @@ Deterministic grid-based tree placement integrated into `TerrainGenerator.Genera
 
 **Block types:** `Wood = 11`, `Leaves = 12`. Both are solid (`IsSolid()` returns true). Colors: Wood = brown `(0.55, 0.35, 0.18)`, Leaves = green `(0.20, 0.55, 0.15)`. Existing meshing, collision, and pathfinding handle them automatically.
 
-### 3.10 Why Build From Scratch (Not Use Existing Voxel Libraries)
+### 3.10 Cave Generation
+
+Dual-threshold 3D noise ("spaghetti caves") creates winding tunnel networks underground. Two independent `FastNoiseLite` 3D simplex noise fields with very different frequencies (0.02 and 0.06, 2 FBM octaves, seeds `seed+600` and `seed+700`) are evaluated at every solid block position. A block is carved to Air where `abs(noise1) < 0.07 AND abs(noise2) < 0.07`. The key to spaghetti (not Swiss cheese): tight thresholds (~2% block carve rate), very different frequencies (broad surface × fine surface = elongated tube intersections), and Y-axis squashing (YSquash=0.5 makes tunnels prefer horizontal).
+
+**Safety rules:**
+- **Surface protection:** No caves within `CaveMinDepth=4` blocks of surface. Caves fade in over `CaveFadeRange=8` blocks below that (depth-scaled thresholds = more caves deeper underground).
+- **Floor protection:** No carving at `worldY <= 2` (bedrock).
+- **Water protection:** No carving at `worldY <= WaterLevel` (prevents underwater air pockets).
+
+**Integration:** `CaveGenerator.CarveCaves()` is called in `TerrainGenerator.GenerateChunkBlocks()` after terrain fill but before tree placement. Surface heights are cached per-column in a `[ThreadStatic]` array and passed to the cave generator. Caves are fully deterministic — same seed = same caves. No cross-chunk coordination needed.
+
+**Impact:** Pathfinding, meshing, collision, and tree generation all work automatically with caves — no changes needed to those systems.
+
+### 3.11 Y-Level Camera Slicing
+
+Dwarf Fortress-style Y-level slicing lets the player see underground by hiding everything above a configurable Y level.
+
+**Shader-based approach:** Custom `.gdshader` files replace `StandardMaterial3D` on all chunk meshes. The fragment shader reads global uniforms `slice_y_level` and `slice_enabled` and discards fragments above the slice. This requires **zero re-meshing** — slice level changes are instant.
+
+**Visualization:** Two complementary techniques make caves visible in sliced view:
+1. **Dark background:** When slicing is active, `CameraController` changes the `WorldEnvironment` background from sky blue to dark gray `(0.15, 0.15, 0.18)`. Cave voids appear as dark holes contrasting against lit stone.
+2. **Cross-section tint:** The opaque shader darkens upward-facing surfaces (NORMAL.y > 0.5) within 1 block below the slice level (multiplied by 0.55). This creates a "floor plan" look on the cut surface without affecting side walls. The previous approach of tinting ALL faces near the slice (including walls) created ugly dark blobs and was reverted.
+
+**Two shaders:** `chunk_opaque.gdshader` for solid blocks (with cross-section tint), `chunk_water.gdshader` for water (with alpha blending, no tint). Global uniforms are declared in `project.godot` under `[shader_globals]`.
+
+**SliceState:** Static class (`scripts/camera/SliceState.cs`) with `Enabled` and `YLevel` properties. Updated by `CameraController`, read by `Colonist` (visibility toggle) and `BlockInteraction` (raycast pierce-through).
+
+**Raycast pierce-through:** When slicing is active, raycasts that hit blocks above the slice level fire continuation rays past the hit point until a valid (below-slice) hit is found. Loop limit of 10 prevents infinite loops.
+
+**Controls:** Page Down = lower slice (1 block per press, first press starts at Y=40), Page Up = raise slice (1 block per press), Home = disable slicing. Slice keys use `Input.IsKeyPressed` polling with debounce in `_Process` (not `_UnhandledInput`) to avoid event routing issues.
+
+### 3.12 Why Build From Scratch (Not Use Existing Voxel Libraries)
 
 Evaluated options:
 - **Zylann's godot_voxel** (C++): Powerful but C# bindings are broken, and it's overkill for colony sim needs
@@ -261,10 +292,14 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 
 **Fix:** Cleaned `main.tscn` to contain only essential nodes (root, camera, light, environment). File went from 14.3MB to ~0.8KB.
 
+**Root cause of recurrence:** The initial fix only cleaned the scene file without addressing the code. The `Owner = GetTree().EditedSceneRoot` assignments in `Main.cs`, `Chunk.cs`, and `World.cs` told Godot's editor to serialize every runtime-created node. Each time the editor saved, the scene bloated again (grew to 48.5MB on second occurrence). The permanent fix was removing ALL `Owner = EditedSceneRoot` assignments and disabling the editor preview `LoadChunkArea()` call.
+
 **Prevention rules:**
+- **NEVER set `Owner = EditedSceneRoot` on runtime-generated nodes.** This is the mechanism that causes serialization. Without Owner set, Godot won't persist runtime nodes to the scene file.
 - **NEVER let the scene file get bloated with baked runtime data.** If `main.tscn` grows beyond a few KB, something is wrong.
-- The `[Tool]` attribute is useful for editor previews but creates this risk. All runtime node creation in `_Ready()` must be guarded with `if (!Engine.IsEditorHint())` where appropriate, OR the scene file must be kept clean.
+- The `[Tool]` attribute is kept only for `[Export]` property editing in the inspector. Editor terrain preview is permanently disabled because it causes scene bloat.
 - If `MoveAndSlide()` produces zero movement despite valid velocity, check for overlapping collision shapes first.
+- After cleaning the scene file, **close and reopen the Godot editor** — it may cache the old scene in memory.
 
 ### 5.4 Background Mesh Generation: Timing Matters for Neighbor Snapshots
 
@@ -312,6 +347,8 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 17 | Streaming optimizations (terrain prefetch, empty chunk skip, time-budgeted mesh) | Done |
 | 18 | Tree generation (deterministic grid-based, per-biome density, Wood + Leaves blocks) | Done |
 | 19 | Background mesh generation (threaded greedy meshing, neighbor snapshots, softer lighting) | Done |
+| 20 | Cave generation (dual-threshold 3D noise spaghetti caves, depth-scaled) | Done |
+| 21 | Y-level camera slicing (shader-based Y-clip, Page Up/Down controls, raycast pierce) | Done |
 
 ### Future Phases (not yet planned in detail):
 - Multiple colonists
@@ -319,7 +356,7 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 - Inventory and resource system (mined blocks become items)
 - Colonist needs (hunger, rest, mood)
 - More block types (ore)
-- Better terrain (caves, overhangs, ore veins)
+- Better terrain (overhangs, ore veins)
 - Selection system (click to select colonists, area designation)
 - Save/load system (disk persistence for modified chunks)
 - UI (menus, status panels, notifications)
@@ -333,6 +370,9 @@ colonysim-3d/
 ├── project.godot
 ├── CLAUDE.md
 ├── main.tscn                             # Entry scene (KEEP MINIMAL — see lesson 5.3)
+├── shaders/
+│   ├── chunk_opaque.gdshader             # Vertex-color lit shader + Y-level slice (solid blocks)
+│   └── chunk_water.gdshader              # Same + alpha blending (water blocks)
 ├── scripts/
 │   ├── Main.cs                           # Entry point, world setup, camera/colonist spawn
 │   ├── world/
@@ -340,7 +380,8 @@ colonysim-3d/
 │   │   ├── Chunk.cs                      # 16x16x16 block storage, mesh, collision, dirty flag
 │   │   ├── ChunkMeshGenerator.cs         # Greedy meshing ArrayMesh + collision generation
 │   │   ├── TerrainGenerator.cs           # 5-layer FastNoiseLite terrain + biomes + rivers
-│   │   ├── TreeGenerator.cs             # Deterministic grid-based tree placement
+│   │   ├── TreeGenerator.cs              # Deterministic grid-based tree placement
+│   │   ├── CaveGenerator.cs              # Dual-threshold 3D noise cave carving
 │   │   ├── Biome.cs                      # BiomeType enum, BiomeData struct, BiomeTable
 │   │   └── Block.cs                      # BlockType enum + BlockData utilities
 │   ├── navigation/
@@ -351,7 +392,8 @@ colonysim-3d/
 │   ├── interaction/
 │   │   └── BlockInteraction.cs           # Mouse raycast, block removal, colonist commands
 │   └── camera/
-│       └── CameraController.cs           # RTS camera (pan, zoom, rotate)
+│       ├── CameraController.cs           # RTS camera (pan, zoom, rotate, Y-slice controls)
+│       └── SliceState.cs                 # Global Y-level slice state (static class)
 └── godot-docs-master/                    # Local Godot 4.6 docs (reference)
 ```
 
@@ -379,7 +421,7 @@ colonysim-3d/
 
 10. **After `MoveAndSlide()`, `IsOnFloor()` may return true for 1-2 frames after a jump** due to the character still touching the launch surface. Use a grace timer (~0.15s) before checking `IsOnFloor()` in jump state.
 
-11. **Keep `main.tscn` minimal.** The `[Tool]` attribute causes the editor to serialize runtime nodes into the scene file. If the file grows beyond a few KB, it will break CharacterBody3D physics. See section 5.3.
+11. **Keep `main.tscn` minimal.** The `[Tool]` attribute causes the editor to serialize runtime nodes into the scene file. If the file grows beyond a few KB, it will break CharacterBody3D physics. The fix is to NEVER set `Owner = EditedSceneRoot` on runtime-created nodes and to NOT use `LoadChunkArea()` in editor mode. See section 5.3.
 
 12. **Water is non-solid.** `BlockData.IsSolid()` returns false for Water (and Air). This means face culling treats water surfaces as exposed faces on adjacent solid blocks, and pathfinding won't route through water.
 
@@ -392,6 +434,16 @@ colonysim-3d/
 16. **Skip empty chunks entirely.** Upper Y layers are almost always 100% air. Tracking them in a `HashSet<Vector3I>` instead of creating full Godot node hierarchies (`Chunk` → `MeshInstance3D` → `StaticBody3D` → `CollisionShape3D`) eliminates ~50% of scene tree overhead during streaming.
 
 17. **Tree generation is deterministic — no special caching needed.** Trees are placed via `PositionHash(worldX, worldZ, seed)` during terrain generation. When a chunk unloads and reloads, identical trees regenerate from the same seed. Only player-modified chunks (with trees mined) need caching, handled by the existing dirty chunk cache.
+
+18. **Chunk materials use ShaderMaterial, not StandardMaterial3D.** All chunk meshes use custom `.gdshader` files for Y-level slice support. The shaders replicate the same vertex-color lit appearance as `StandardMaterial3D` but add global uniform-based fragment discard for slicing. Lazy-loaded via static properties in `ChunkMeshGenerator`.
+
+19. **Cave generation is deterministic — same as trees.** Caves are carved via 3D noise evaluation at world coordinates. When a chunk unloads and reloads, identical caves regenerate. Only player-modified chunks need caching.
+
+20. **Global shader uniforms must be declared in project.godot.** The `[shader_globals]` section defines `slice_y_level` and `slice_enabled`. Without this declaration, `RenderingServer.GlobalShaderParameterSet()` calls are silently ignored.
+
+21. **Godot shader `fragment()` does not allow `return` statements.** Use `if/else` branching with `discard` instead. Also, compound boolean expressions mixing `bool` and float comparisons (e.g., `slice_enabled && world_position.y > level`) may fail to compile — use nested `if` blocks instead.
+
+22. **Y-level slice cross-section tint must use NORMAL to avoid side walls.** The first attempt tinted ALL fragments within 1 block of the slice level, creating ugly dark blobs on side walls and cliffs. The correct approach: only tint upward-facing surfaces (NORMAL.y > 0.5) so only the "floor plan" cut surface gets the darkening effect.
 
 ---
 
@@ -406,6 +458,9 @@ colonysim-3d/
 | Right click | Command colonist to walk to position |
 | F1 | Toggle path visualization (red line + markers) |
 | F2 | Toggle diagonal pathfinding movement |
+| Page Down | Lower Y-level slice (reveal underground) |
+| Page Up | Raise Y-level slice |
+| Home | Disable Y-level slice (show full world) |
 
 ---
 

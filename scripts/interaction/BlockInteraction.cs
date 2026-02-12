@@ -44,11 +44,27 @@ public partial class BlockInteraction : Node
         if (_camera == null || _colonist == null) return;
 
         var from = _camera.ProjectRayOrigin(screenPos);
-        var to = from + _camera.ProjectRayNormal(screenPos) * _rayLength;
+        var dir = _camera.ProjectRayNormal(screenPos);
+        var to = from + dir * _rayLength;
 
         var spaceState = _camera.GetWorld3D().DirectSpaceState;
         var query = PhysicsRayQueryParameters3D.Create(from, to);
         var result = spaceState.IntersectRay(query);
+
+        // When slicing, pierce through blocks above the slice level
+        int pierceAttempts = 0;
+        while (result != null && result.Count > 0 && pierceAttempts < 10)
+        {
+            var pos = (Vector3)result["position"];
+            if (!SliceState.Enabled || pos.Y <= SliceState.YLevel + 0.5f)
+                break; // Valid hit below slice
+
+            // Hit is above slice — continue ray past this point
+            from = pos + dir * 0.1f;
+            query = PhysicsRayQueryParameters3D.Create(from, to);
+            result = spaceState.IntersectRay(query);
+            pierceAttempts++;
+        }
 
         if (result == null || result.Count == 0) return;
 
@@ -62,11 +78,27 @@ public partial class BlockInteraction : Node
         if (_camera == null || _world == null) return;
 
         var from = _camera.ProjectRayOrigin(screenPos);
-        var to = from + _camera.ProjectRayNormal(screenPos) * _rayLength;
+        var dir = _camera.ProjectRayNormal(screenPos);
+        var to = from + dir * _rayLength;
 
         var spaceState = _camera.GetWorld3D().DirectSpaceState;
         var query = PhysicsRayQueryParameters3D.Create(from, to);
         var result = spaceState.IntersectRay(query);
+
+        // When slicing, pierce through blocks above the slice level
+        int pierceAttempts = 0;
+        while (result != null && result.Count > 0 && pierceAttempts < 10)
+        {
+            var pos = (Vector3)result["position"];
+            if (!SliceState.Enabled || pos.Y <= SliceState.YLevel + 0.5f)
+                break; // Valid hit below slice
+
+            // Hit is above slice — continue ray past this point
+            from = pos + dir * 0.1f;
+            query = PhysicsRayQueryParameters3D.Create(from, to);
+            result = spaceState.IntersectRay(query);
+            pierceAttempts++;
+        }
 
         if (result == null || result.Count == 0) return;
 

@@ -328,8 +328,7 @@ public partial class World : Node3D
 
             var chunk = new Chunk();
             AddChild(chunk);
-            if (Engine.IsEditorHint())
-                chunk.Owner = GetTree().EditedSceneRoot;
+            // Do NOT set chunk.Owner — prevents scene file bloat (lesson 5.3)
             chunk.Initialize(result.Coord);
             chunk.SetBlockData(result.Blocks);
             _chunks[result.Coord] = chunk;

@@ -432,8 +432,18 @@ public static class ChunkMeshGenerator
         };
     }
 
+    // Cached shader resources (lazy-loaded on first use, main thread only)
+    private static Shader _opaqueShader;
+    private static Shader _waterShader;
+
+    private static Shader OpaqueShader =>
+        _opaqueShader ??= GD.Load<Shader>("res://shaders/chunk_opaque.gdshader");
+    private static Shader WaterShader =>
+        _waterShader ??= GD.Load<Shader>("res://shaders/chunk_water.gdshader");
+
     /// <summary>
     /// Apply pre-computed mesh data to Godot objects. MUST be called on the main thread.
+    /// Uses ShaderMaterial with custom shaders for Y-level slice support.
     /// </summary>
     public static ArrayMesh BuildArrayMesh(SurfaceData[] surfaces)
     {
@@ -451,16 +461,13 @@ public static class ChunkMeshGenerator
 
             mesh.AddSurfaceFromArrays(Mesh.PrimitiveType.Triangles, arrays);
 
-            var material = new StandardMaterial3D();
-            material.VertexColorUseAsAlbedo = true;
-            material.Roughness = 0.85f;
-            material.Metallic = 0.0f;
+            // Use custom shaders for Y-level slice support
+            var material = new ShaderMaterial();
             if (surface.BlockType == BlockType.Water)
-            {
-                material.Transparency = BaseMaterial3D.TransparencyEnum.Alpha;
-                material.Roughness = 0.2f;
-                material.Metallic = 0.1f;
-            }
+                material.Shader = WaterShader;
+            else
+                material.Shader = OpaqueShader;
+
             mesh.SurfaceSetMaterial(surfaceCount, material);
             surfaceCount++;
         }

@@ -37,14 +37,9 @@ public partial class Chunk : Node3D
         _collisionShape.Name = "CollisionShape";
         _staticBody.AddChild(_collisionShape);
 
-        // Make children visible in editor scene tree
-        if (Engine.IsEditorHint())
-        {
-            var root = GetTree().EditedSceneRoot;
-            _meshInstance.Owner = root;
-            _staticBody.Owner = root;
-            _collisionShape.Owner = root;
-        }
+        // IMPORTANT: Do NOT set Owner = EditedSceneRoot on these children.
+        // Setting Owner causes Godot to serialize ALL chunk nodes into main.tscn,
+        // bloating the scene file and breaking CharacterBody3D physics (lesson 5.3).
     }
 
     /// <summary>

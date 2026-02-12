@@ -50,6 +50,7 @@ public partial class Main : Node3D
             _cameraController.Name = "CameraController";
             _cameraController.Position = new Vector3(spawnXZ.X + 0.5f, surfaceHeight + 2, spawnXZ.Y + 0.5f);
             AddChild(_cameraController);
+            _cameraController.SetMaxWorldHeight(ChunkYLayers * Chunk.SIZE);
             var camera = _cameraController.Camera;
 
             // Spawn colonist on the surface (surfaceHeight + 1 = standing on top of surface block)
@@ -147,20 +148,20 @@ public partial class Main : Node3D
         _world.Name = "World";
         AddChild(_world);
 
-        if (Engine.IsEditorHint())
-            _world.Owner = GetTree().EditedSceneRoot;
+        // IMPORTANT: Do NOT set _world.Owner = EditedSceneRoot here.
+        // Setting Owner causes Godot to serialize ALL runtime-generated chunks into main.tscn,
+        // bloating it to 50+ MB and creating overlapping collision shapes that make
+        // CharacterBody3D.MoveAndSlide() a complete no-op (lesson 5.3).
 
         // Create terrain generator with the configured seed and pass to world
         var terrainGen = new TerrainGenerator(TerrainSeed);
         _world.SetTerrainGenerator(terrainGen);
         _world.SetYChunkLayers(ChunkYLayers);
 
-        // Editor: load chunks immediately for preview (no _Process streaming in editor)
-        // Runtime: streaming system in _Process() handles all loading from first frame
-        if (Engine.IsEditorHint())
-        {
-            _world.LoadChunkArea(new Vector3I(ChunkRenderDistance, 0, ChunkRenderDistance), ChunkRenderDistance);
-        }
+        // NOTE: Editor preview (LoadChunkArea) is intentionally disabled.
+        // It caused main.tscn to bloat to 50+ MB, breaking CharacterBody3D physics.
+        // The [Tool] attribute is kept only for [Export] property editing in the inspector.
+        // To preview terrain, run the game instead.
 
         int gridSize = 2 * ChunkRenderDistance + 1;
         int blockSpan = gridSize * Chunk.SIZE;

@@ -169,6 +169,9 @@ public partial class Colonist : CharacterBody3D
             return;
         }
 
+        // Y-level slice visibility: hide colonist when above the slice level
+        Visible = !SliceState.Enabled || Position.Y <= SliceState.YLevel;
+
         switch (_state)
         {
             case State.Idle:

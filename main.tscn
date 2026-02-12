@@ -6,13 +6,13 @@
 background_mode = 1
 background_color = Color(0.53, 0.71, 0.87, 1)
 ambient_light_source = 1
-ambient_light_color = Color(0.55, 0.55, 0.60, 1)
+ambient_light_color = Color(0.55, 0.55, 0.6, 1)
 ambient_light_energy = 0.8
 tonemap_mode = 2
 
 [node name="Origin" type="Node3D"]
 script = ExtResource("1")
-ChunkRenderDistance = 10
+ChunkRenderDistance = 20
 ChunkYLayers = 8
 
 [node name="Camera3D" type="Camera3D" parent="."]
