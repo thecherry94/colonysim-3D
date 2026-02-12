@@ -80,12 +80,14 @@ Why voxel grid A* works:
 - No sync issues — pathfinding operates on block data directly, no intermediate representation.
 - Implementation is ~200 lines of straightforward C#.
 
-**Recommended A* design:**
-- 4-connected neighbors (no diagonals) to avoid corner-clipping
-- Neighbor types: flat walk (same Y), step up (Y+1), step down (Y-1)
+**Current A* design:**
+- 8-connected neighbors (diagonals toggleable at runtime via F2, default ON)
+- Cardinal neighbor types: flat walk (same Y), step up (Y+1), step down (Y-1)
+- Diagonal neighbor types: flat and step-down only (no diagonal step-up — jump physics don't support it)
+- Diagonal corner-cutting prevention: both adjacent cardinal neighbors must be passable
 - 2-high clearance checks at every destination (colonists are ~2 blocks tall)
-- Move costs: flat=1.0, step down=1.2, step up=2.0 (prefers flat routes)
-- Heuristic: Manhattan distance with Y weighted higher (~1.5x)
+- Move costs: flat cardinal=1.0, step down=1.2, step up=2.0, flat diagonal=1.414, diagonal step-down=1.7
+- Heuristic: octile distance (when diagonals enabled) or Manhattan (when disabled), Y weighted ~1.5x
 - Hard limit on nodes explored (~10,000) to prevent runaway searches on large worlds
 - .NET's `PriorityQueue<TElement, TPriority>` is available and works fine
 
@@ -95,14 +97,51 @@ Use `CharacterBody3D` with `MoveAndSlide()` and a simple state machine:
 
 **States:** `Idle → Walking → JumpingUp → Falling`
 - **Walking:** Follow waypoint list. Move horizontally toward current waypoint's block center. Advance when close enough. If next waypoint is higher → transition to JumpingUp.
-- **JumpingUp:** Apply upward velocity + continue horizontal movement. Transition back to Walking on landing. Use a grace timer (~0.1s) after jumping to avoid false `IsOnFloor()` detection.
+- **JumpingUp:** Apply upward velocity + continue horizontal movement. Transition back to Walking on landing. Use a grace timer (~0.15s) after jumping to avoid false `IsOnFloor()` detection.
 - **Falling:** Gravity descent (step-down, or pushed off edge). Resume Walking on landing.
 
 Add **stuck detection**: if the colonist makes no progress for ~2 seconds, clear the path and go idle (or repath).
 
 **Capsule dimensions:** radius=0.3, height=1.6. This gives 0.2 units of wall clearance when the colonist is at a block center (0.5 - 0.3 = 0.2).
 
-### 3.5 Why Build From Scratch (Not Use Existing Voxel Libraries)
+**Path visualization:** Red line + cross markers drawn via ImmediateMesh, toggled with F1. Added to scene root (world space, not colonist-local) with NoDepthTest for visibility.
+
+### 3.5 Chunk Streaming
+
+Chunks load/unload dynamically based on camera position:
+- `Main._Process()` converts camera position to chunk XZ coordinate each frame, calls `World.UpdateLoadedChunks()`
+- New chunks are queued and loaded at a budget of **16 chunks per frame** (avoids frame stutter)
+- Chunks unload when their XZ distance from camera exceeds `radius + 2` (hysteresis prevents thrashing at boundaries)
+- After each batch of loads, meshes are regenerated for new chunks **plus their 6 face-adjacent neighbors** (cross-chunk face culling)
+- Initial startup still uses `LoadChunkArea()` for immediate bulk loading
+
+### 3.6 Dirty Chunk Caching
+
+Modified chunks are preserved across unload/reload cycles:
+- `Chunk.IsDirty` flag is set whenever `SetBlock()` modifies a block
+- On unload, dirty chunks save a copy of their block data to `World._modifiedChunkCache` (`Dictionary<Vector3I, BlockType[,,]>`)
+- On reload, the cache is checked first — cached data is restored instead of regenerating from noise
+- Unmodified chunks are never cached; they regenerate deterministically from the seed
+
+This is an **in-memory cache only** — modifications are lost when the game restarts. Disk persistence is a future feature.
+
+### 3.7 Terrain Generation
+
+Multi-layer noise terrain using 4 `FastNoiseLite` layers:
+- **Continentalness** (freq 0.003): broad terrain category — lowlands, midlands, highlands
+- **Elevation** (freq 0.01): primary height variation, amplitude scaled by continentalness
+- **Detail** (freq 0.06): fine surface roughness, suppressed in flat areas
+- **River** (freq 0.005): rivers form where `abs(noise) ≈ 0`, only in non-mountainous terrain above water level
+
+Height range: 0-62 across multiple Y chunk layers (default 4 layers = 64 blocks tall). Water level: 25.
+
+Block types by position:
+- Mountain peaks (continental > 0.6, height >= 48): Stone surface
+- Beach (height <= water+2): Sand surface
+- Underwater: Sand (or Gravel in river channels)
+- Everything else: Grass surface, Dirt subsurface (3 layers), Stone deep
+
+### 3.8 Why Build From Scratch (Not Use Existing Voxel Libraries)
 
 Evaluated options:
 - **Zylann's godot_voxel** (C++): Powerful but C# bindings are broken, and it's overkill for colony sim needs
@@ -125,7 +164,7 @@ Three coordinate systems are used throughout. Mixing them up causes bugs.
 | **World position** | `Vector3` | `(19.5, 8.0, 28.5)` | Colonist position, camera, raycasts |
 
 **Conversions:**
-- World block → Chunk coord: `chunkCoord = FloorToInt(worldBlock / 16)` (per axis)
+- World block → Chunk coord: `chunkCoord = FloorDiv(worldBlock, 16)` (per axis, rounds toward -inf)
 - World block → Local block: `local = ((worldBlock % 16) + 16) % 16` (handles negatives!)
 - Local block → World block: `worldBlock = chunkCoord * 16 + local`
 - Block center world position: `(worldBlockX + 0.5, worldBlockY + 1.0, worldBlockZ + 0.5)` — the +1 on Y is because the colonist stands ON TOP of the block
@@ -156,7 +195,22 @@ These are concrete mistakes made during prototyping. Each one wasted significant
 
 See section 3.3. Do not attempt to use Godot's built-in navigation system. It was tried extensively and failed due to structural mismatches with voxel geometry. Use grid-based A* instead.
 
-### 5.3 General Debugging Principles
+### 5.3 [Tool] Attribute + Scene File Bloat = Broken Physics
+
+**Problem:** Colonist spawned in the air and `MoveAndSlide()` was a complete no-op — position never changed despite velocity accumulating correctly. Both `MoveAndSlide()` and `MoveAndCollide()` produced zero movement.
+
+**Root cause:** The `[Tool]` attribute on `Main.cs` causes Godot's editor to execute `_Ready()`, which creates the entire World with all chunks, meshes, and collision shapes. The editor then **serializes all of these runtime-generated nodes into the `.tscn` scene file**. The file grew to 14.3MB with thousands of baked Chunk nodes.
+
+When the game runs, it loads the pre-baked collision shapes from the scene AND creates new ones from scratch. The `CharacterBody3D` becomes trapped between two overlapping collision worlds, making `MoveAndSlide()` a complete no-op.
+
+**Fix:** Cleaned `main.tscn` to contain only essential nodes (root, camera, light, environment). File went from 14.3MB to ~0.8KB.
+
+**Prevention rules:**
+- **NEVER let the scene file get bloated with baked runtime data.** If `main.tscn` grows beyond a few KB, something is wrong.
+- The `[Tool]` attribute is useful for editor previews but creates this risk. All runtime node creation in `_Ready()` must be guarded with `if (!Engine.IsEditorHint())` where appropriate, OR the scene file must be kept clean.
+- If `MoveAndSlide()` produces zero movement despite valid velocity, check for overlapping collision shapes first.
+
+### 5.4 General Debugging Principles
 
 1. **Understand the system before changing code.** Random trial-and-error on 6 cube faces with 4 vertices each produces chaos.
 2. **Don't accept workarounds that "look right."** Verify the fix is actually correct (check lighting, normals, physics behavior — not just visual appearance).
@@ -165,125 +219,64 @@ See section 3.3. Do not attempt to use Godot's built-in navigation system. It wa
 
 ---
 
-## 6. Implementation Roadmap
+## 6. Implementation Status
 
-Build in this order. Each phase should compile and run before moving to the next.
+### Completed Phases
 
-### Phase 1: Project Setup
-- Create Godot 4.6 Mono project
-- Configure Jolt Physics, D3D12 renderer
-- Set up C# project structure (namespaces, folders)
-- Add a Camera3D and DirectionalLight3D to the main scene
-
-### Phase 2: Block Definitions
-- Create `BlockType` enum: Air, Stone, Dirt, Grass
-- Create `BlockData` static class: color per type, `IsSolid()` check
-- Air = not solid, everything else = solid
-
-### Phase 3: Single Chunk Rendering
-- Create `Chunk` class (Node3D): holds `BlockType[16,16,16]` array
-- Create `ChunkMeshGenerator`: builds ArrayMesh from block data
-  - 6 face definitions (top, bottom, north, south, east, west)
-  - Face culling: only render faces adjacent to Air blocks
-  - Correct CW winding order (see Lesson 5.1)
-  - Separate mesh surface per block type (for different materials/colors)
-- Fill chunk with test data (flat terrain with a hole) to verify rendering
-- **Verify:** Chunk renders as solid colored blocks with correct lighting
-
-### Phase 4: Chunk Collision
-- Add `StaticBody3D` + `CollisionShape3D` to each chunk
-- Build `ConcavePolygonShape3D` from mesh vertex data
-- **Verify:** Drop a RigidBody3D ball onto terrain — it should land and not fall through
-
-### Phase 5: Multi-Chunk World
-- Create `World` class (Node3D): manages `Dictionary<Vector3I, Chunk>`
-- Chunk loading/unloading by chunk coordinate
-- `LoadChunkArea(center, radius)` for loading grids of chunks
-- World-space block access: `GetBlock(Vector3I)`, `SetBlock(Vector3I, BlockType)`
-- Proper coordinate conversion: world → chunk + local (handle negatives!)
-- Start with 3x3 chunk grid (48x48 blocks)
-- **Verify:** 9 chunks render seamlessly, ball can roll across chunk boundaries
-
-### Phase 6: Terrain Generation
-- Create `TerrainGenerator` using Godot's `FastNoiseLite`
-- Noise-based height map: `GetHeight(worldX, worldZ)` returns surface height
-- Layer assignment: grass on top, dirt below, stone at depth
-- Use world coordinates for noise sampling (seamless across chunks)
-- **Verify:** Rolling hills with visible grass/dirt/stone layers
-
-### Phase 7: Block Modification
-- Create `BlockInteraction` class: mouse raycast → block identification
-- Left-click: remove block (set to Air), regenerate chunk mesh + collision
-- Hit normal math: offset slightly into the block to identify which block was clicked
-- **Verify:** Click to dig holes in terrain, mesh and collision update in real-time
-
-### Phase 8: A* Pathfinding
-- Create `VoxelNode` struct: (X, Y, Z) block coordinate + `StandPosition` property
-- Create `PathResult` class: success bool + waypoint list
-- Create `VoxelPathfinder` class: A* implementation
-  - Takes World reference, queries `GetBlock()` for neighbor checks
-  - 4-connected neighbors with flat/step-up/step-down logic
-  - 2-high clearance validation at every destination
-  - `WorldPosToVoxelNode()` conversion (scan downward for solid ground)
-- **Verify:** Call `FindPath()` from test code, print waypoint list to console
-
-### Phase 9: Basic Colonist
-- Create `Colonist` scene: CharacterBody3D + CapsuleMesh + CapsuleShape3D
-- State machine movement: Idle/Walking/JumpingUp/Falling
-- Follow waypoint list from pathfinder
-- Jump physics: upward velocity + horizontal momentum + grace timer
-- Gravity when not on floor
-- `SetDestination(Vector3)` triggers pathfinding and starts movement
-- Right-click on terrain → colonist walks there
-- **Verify:** Colonist walks across terrain, climbs 1-block steps, descends, crosses chunk boundaries
-
-### Phase 10: RTS Camera
-- Replace debug orbit camera with RTS-style camera
-- WASD/arrow key panning, scroll wheel zoom, middle-mouse rotate
-- Optional: edge-of-screen panning
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Project setup (Godot 4.6 Mono, Jolt, D3D12) | Done |
+| 2 | Block definitions (Air, Stone, Dirt, Grass, Sand, Water, Gravel) | Done |
+| 3 | Single chunk rendering (ArrayMesh, face culling, CW winding) | Done |
+| 4 | Chunk collision (ConcavePolygonShape3D per chunk) | Done |
+| 5 | Multi-chunk world (Dictionary<Vector3I, Chunk>, coordinate conversion) | Done |
+| 6 | Terrain generation (4-layer noise, rivers, beaches, mountains) | Done |
+| 7 | Block modification (left-click remove, cross-chunk mesh regen) | Done |
+| 8 | A* pathfinding (8-connected, toggleable diagonals, clearance checks) | Done |
+| 9 | Colonist (CharacterBody3D state machine, path visualization) | Done |
+| 10 | RTS camera (WASD pan, scroll zoom, middle-mouse rotate) | Done |
+| 11 | Vertical chunks (configurable Y layers, 64-block default height) | Done |
+| 12 | Chunk streaming (camera-based load/unload, 16/frame budget) | Done |
+| 13 | Dirty chunk caching (in-memory preservation of modified chunks) | Done |
 
 ### Future Phases (not yet planned in detail):
 - Multiple colonists
 - Task/job system (mine, build, haul designations)
 - Inventory and resource system (mined blocks become items)
 - Colonist needs (hunger, rest, mood)
-- More block types (wood, ore, sand, water)
+- More block types (wood, ore)
 - Better terrain (caves, overhangs, biomes, ore veins)
-- Chunk streaming (load/unload based on camera)
-- Vertical chunks (worlds taller than 16 blocks)
 - Selection system (click to select colonists, area designation)
-- Save/load system
+- Save/load system (disk persistence for modified chunks)
 - UI (menus, status panels, notifications)
 
 ---
 
-## 7. Suggested File Structure
+## 7. File Structure
 
 ```
 colonysim-3d/
 ├── project.godot
 ├── CLAUDE.md
+├── main.tscn                             # Entry scene (KEEP MINIMAL — see lesson 5.3)
 ├── scripts/
+│   ├── Main.cs                           # Entry point, world setup, camera/colonist spawn
 │   ├── world/
-│   │   ├── World.cs              # Chunk manager, world-space block access
-│   │   ├── Chunk.cs              # 16x16x16 block storage, mesh, collision
-│   │   ├── ChunkMeshGenerator.cs # Procedural ArrayMesh from block data
-│   │   ├── TerrainGenerator.cs   # FastNoiseLite height map + block layers
-│   │   └── Block.cs              # BlockType enum + BlockData utilities
+│   │   ├── World.cs                      # Chunk manager, streaming, dirty cache, block access
+│   │   ├── Chunk.cs                      # 16x16x16 block storage, mesh, collision, dirty flag
+│   │   ├── ChunkMeshGenerator.cs         # Procedural ArrayMesh from block data
+│   │   ├── TerrainGenerator.cs           # 4-layer FastNoiseLite terrain + rivers
+│   │   └── Block.cs                      # BlockType enum + BlockData utilities
 │   ├── navigation/
-│   │   ├── VoxelPathfinder.cs    # A* on voxel grid
-│   │   └── PathRequest.cs        # VoxelNode, PathResult data structures
+│   │   ├── VoxelPathfinder.cs            # A* on voxel grid (8-connected, toggleable diagonals)
+│   │   └── PathRequest.cs                # VoxelNode, PathResult data structures
 │   ├── colonist/
-│   │   └── Colonist.cs           # CharacterBody3D + state machine movement
+│   │   └── Colonist.cs                   # CharacterBody3D + state machine + path visualization
 │   ├── interaction/
-│   │   └── BlockInteraction.cs   # Mouse raycast, block modification, colonist commands
+│   │   └── BlockInteraction.cs           # Mouse raycast, block removal, colonist commands
 │   └── camera/
-│       └── CameraController.cs   # RTS camera (pan, zoom, rotate)
-├── scenes/
-│   ├── main.tscn                 # Entry scene
-│   └── colonist/
-│       └── Colonist.tscn         # Colonist prefab
-└── godot-docs-master/            # Local Godot 4.6 docs (reference)
+│       └── CameraController.cs           # RTS camera (pan, zoom, rotate)
+└── godot-docs-master/                    # Local Godot 4.6 docs (reference)
 ```
 
 ---
@@ -308,11 +301,29 @@ colonysim-3d/
 
 9. **Blocks are 1x1x1 units.** Colonists are ~2 blocks tall. All clearance checks must verify 2 air blocks above a walkable surface.
 
-10. **After `MoveAndSlide()`, `IsOnFloor()` may return true for 1-2 frames after a jump** due to the character still touching the launch surface. Use a grace timer (~0.1s) before checking `IsOnFloor()` in jump state.
+10. **After `MoveAndSlide()`, `IsOnFloor()` may return true for 1-2 frames after a jump** due to the character still touching the launch surface. Use a grace timer (~0.15s) before checking `IsOnFloor()` in jump state.
+
+11. **Keep `main.tscn` minimal.** The `[Tool]` attribute causes the editor to serialize runtime nodes into the scene file. If the file grows beyond a few KB, it will break CharacterBody3D physics. See section 5.3.
+
+12. **Water is non-solid.** `BlockData.IsSolid()` returns false for Water (and Air). This means face culling treats water surfaces as exposed faces on adjacent solid blocks, and pathfinding won't route through water.
 
 ---
 
-## 9. Reference Materials
+## 9. Runtime Controls
+
+| Key | Action |
+|-----|--------|
+| WASD / Arrow keys | Pan camera |
+| Scroll wheel | Zoom in/out |
+| Middle mouse + drag | Rotate camera |
+| Left click | Remove block |
+| Right click | Command colonist to walk to position |
+| F1 | Toggle path visualization (red line + markers) |
+| F2 | Toggle diagonal pathfinding movement |
+
+---
+
+## 10. Reference Materials
 
 Godot 4.6 documentation is available locally at:
 ```
@@ -327,7 +338,7 @@ Key docs:
 
 ---
 
-## 10. Testing & Verification
+## 11. Testing & Verification
 
 You cannot run the Godot project yourself. The **user** runs the game and reports back. This means you must make it easy for the user to verify that things work.
 
@@ -335,40 +346,25 @@ You cannot run the Godot project yourself. The **user** runs the game and report
 
 **Use `GD.Print()` liberally.** Every significant action should log to the Godot console so the user can confirm behavior without reading code. Examples:
 
-- Chunk loaded: `"Loaded chunk at (1, 0, 2): 847 solid blocks"`
-- Mesh generated: `"Chunk (1,0,2): 1,204 triangles, 312 collision faces"`
-- Block modified: `"Removed block at (19, 7, 28) — chunk (1,0,1) regenerated"`
-- Path found: `"Path: (19,7,28) → (25,5,30), 14 waypoints, 3 height changes"`
-- Path failed: `"No path from (19,7,28) to (25,5,30) — explored 847 nodes"`
-- Colonist state: `"Colonist: Walking → JumpingUp at (22, 8, 29)"`
+- Chunk loaded: `"Loaded 16 chunks (48 remaining)"`
+- Chunk cached: `"Cached modified chunk (3, 0, 5) (2 cached total)"`
+- Chunk restored: `"Restored modified chunk (3, 0, 5) from cache"`
+- Chunk unloaded: `"Unloaded 32 chunks"`
+- Block modified: `"Removed block at (19, 7, 28) — was Grass"`
+- Path found: `"Colonist: path set, 14 waypoints"`
+- Path failed: `"Colonist: path not found, staying idle"`
+- Colonist state: `"Colonist: reached destination (25.5, 6.0, 30.5)"`
 - Colonist stuck: `"Colonist: stuck for 2.1s at (22.4, 8.0, 29.5), clearing path"`
-- Colonist arrived: `"Colonist: reached destination (25, 6, 30)"`
 
 ### Asking the User to Verify
 
-After completing each phase, **ask the user to run the game and report back.** Be specific about what to look for:
-
-- "Please run the scene. You should see a 48x48 block terrain with rolling hills. Can you confirm the grass/dirt/stone layers are visible?"
-- "Try left-clicking on different blocks. The console should print which block was removed. Does the terrain update visually?"
-- "Right-click on a distant block. The console should show a path with waypoint count. Does the colonist walk there?"
-- "Try right-clicking on a block that's 1 block higher than the colonist. The console should show a jump state transition. Does the colonist jump up?"
-
-If something doesn't work, **ask the user to paste the console output.** The debug logs will tell you what happened without needing to guess.
-
-### Verification Checklist Per Phase
-
-Don't move to the next phase until the user confirms the current one works. Ask them to:
-
-1. **Report console output** — are the expected log messages appearing?
-2. **Describe visual result** — does it look right? Any visual artifacts?
-3. **Test edge cases** — click near chunk boundaries, click on the highest/lowest terrain, etc.
-4. **Report any errors** — red text in the Godot console means something broke
+After completing each feature, **ask the user to run the game and report back.** Be specific about what to look for. If something doesn't work, **ask the user to paste the console output.** The debug logs will tell you what happened without needing to guess.
 
 ---
 
-## 11. Quality Standards
+## 12. Quality Standards
 
-- Every phase must **compile with 0 errors and 0 warnings** before moving to the next.
+- Every change must **compile with 0 errors and 0 warnings** before committing.
 - Test each feature in the running game, not just in theory.
 - Prefer simple, readable code over clever abstractions. This project will grow — understandability matters more than cleverness.
 - Do not over-engineer for future requirements. Build what's needed now.
