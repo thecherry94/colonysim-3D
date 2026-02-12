@@ -15,10 +15,17 @@ public partial class Main : Node3D
 
         if (!Engine.IsEditorHint())
         {
-            // Runtime only: reposition camera, spawn colonist, set up interaction
-            var camera = GetNode<Camera3D>("Camera3D");
-            camera.Position = new Vector3(8, 30, 45);
-            camera.LookAt(new Vector3(8, 4, 8), Vector3.Up);
+            // Disable the editor camera — RTS camera takes over
+            var editorCamera = GetNodeOrNull<Camera3D>("Camera3D");
+            if (editorCamera != null)
+                editorCamera.QueueFree();
+
+            // RTS camera: pivot centered on world, camera orbits around it
+            var cameraController = new CameraController();
+            cameraController.Name = "CameraController";
+            cameraController.Position = new Vector3(8, 4, 8); // Pivot at world center
+            AddChild(cameraController);
+            var camera = cameraController.Camera;
 
             // Spawn colonist
             var pathfinder = new VoxelPathfinder(_world);
