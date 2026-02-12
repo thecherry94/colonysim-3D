@@ -14,11 +14,23 @@ public class VoxelPathfinder
     private const float CostFlat = 1.0f;
     private const float CostStepDown = 1.2f;
     private const float CostStepUp = 2.0f;
+    private const float CostDiagonal = 1.414f;        // sqrt(2)
+    private const float CostDiagonalDown = 1.614f;     // sqrt(2) + 0.2
 
-    // 4 horizontal directions (no diagonals)
-    private static readonly Vector3I[] HorizontalDirs = {
+    // 4 cardinal directions
+    private static readonly Vector3I[] CardinalDirs = {
         new(1, 0, 0), new(-1, 0, 0), new(0, 0, 1), new(0, 0, -1)
     };
+
+    // 4 diagonal directions
+    private static readonly Vector3I[] DiagonalDirs = {
+        new(1, 0, 1), new(1, 0, -1), new(-1, 0, 1), new(-1, 0, -1)
+    };
+
+    /// <summary>
+    /// Toggle diagonal movement. When false, uses 4-connected cardinal only.
+    /// </summary>
+    public bool AllowDiagonals { get; set; } = true;
 
     public VoxelPathfinder(World world)
     {
@@ -91,7 +103,8 @@ public class VoxelPathfinder
 
     private IEnumerable<(VoxelNode node, float cost)> GetNeighbors(VoxelNode current)
     {
-        foreach (var dir in HorizontalDirs)
+        // Cardinal neighbors (N/S/E/W)
+        foreach (var dir in CardinalDirs)
         {
             int nx = current.X + dir.X;
             int nz = current.Z + dir.Z;
@@ -117,6 +130,53 @@ public class VoxelPathfinder
                 yield return (new VoxelNode(nx, current.Y - 1, nz), CostStepDown);
             }
         }
+
+        // Diagonal neighbors (NE/NW/SE/SW)
+        if (!AllowDiagonals) yield break;
+
+        foreach (var dir in DiagonalDirs)
+        {
+            int dx = dir.X;
+            int dz = dir.Z;
+            int nx = current.X + dx;
+            int nz = current.Z + dz;
+
+            // CORNER SAFETY: both adjacent cardinal blocks must have air at body height.
+            // Without this, the capsule (radius 0.3) clips through block corners.
+            if (!HasCornerClearance(current.X, current.Y, current.Z, dx, dz))
+                continue;
+
+            // Flat diagonal
+            if (IsWalkable(nx, current.Y, nz))
+            {
+                yield return (new VoxelNode(nx, current.Y, nz), CostDiagonal);
+                continue;
+            }
+
+            // Diagonal step-down only (no diagonal step-up — jump physics don't support it)
+            if (current.Y > 0 && IsWalkable(nx, current.Y - 1, nz))
+            {
+                yield return (new VoxelNode(nx, current.Y - 1, nz), CostDiagonalDown);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Check that both cardinal neighbors adjacent to a diagonal move have
+    /// 2-high air clearance. Prevents capsule corner-clipping.
+    /// From (x, y, z) moving diagonally by (dx, dz):
+    ///   - Block at (x+dx, y+1, z) and (x+dx, y+2, z) must be Air
+    ///   - Block at (x, y+1, z+dz) and (x, y+2, z+dz) must be Air
+    /// </summary>
+    private bool HasCornerClearance(int x, int y, int z, int dx, int dz)
+    {
+        var side1Low = _world.GetBlock(new Vector3I(x + dx, y + 1, z));
+        var side1High = _world.GetBlock(new Vector3I(x + dx, y + 2, z));
+        var side2Low = _world.GetBlock(new Vector3I(x, y + 1, z + dz));
+        var side2High = _world.GetBlock(new Vector3I(x, y + 2, z + dz));
+
+        return side1Low == BlockType.Air && side1High == BlockType.Air
+            && side2Low == BlockType.Air && side2High == BlockType.Air;
     }
 
     /// <summary>
@@ -141,8 +201,20 @@ public class VoxelPathfinder
 
     private float Heuristic(VoxelNode a, VoxelNode b)
     {
-        // Manhattan distance with Y weighted 1.5x
-        return Mathf.Abs(a.X - b.X) + Mathf.Abs(a.Z - b.Z) + Mathf.Abs(a.Y - b.Y) * 1.5f;
+        float dx = Mathf.Abs(a.X - b.X);
+        float dz = Mathf.Abs(a.Z - b.Z);
+        float dy = Mathf.Abs(a.Y - b.Y);
+
+        if (AllowDiagonals)
+        {
+            // Octile distance: diagonals cost sqrt(2), cardinals cost 1
+            return Mathf.Max(dx, dz) + 0.414f * Mathf.Min(dx, dz) + dy * 1.5f;
+        }
+        else
+        {
+            // Manhattan distance for 4-connected
+            return dx + dz + dy * 1.5f;
+        }
     }
 
     private List<VoxelNode> ReconstructPath(Dictionary<VoxelNode, VoxelNode> cameFrom, VoxelNode current)

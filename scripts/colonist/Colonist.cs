@@ -91,14 +91,22 @@ public partial class Colonist : CharacterBody3D
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (@event is InputEventKey keyEvent && keyEvent.Pressed && keyEvent.Keycode == Key.F1)
+        if (@event is InputEventKey keyEvent && keyEvent.Pressed)
         {
-            _showPath = !_showPath;
-            GD.Print($"Path visualization: {(_showPath ? "ON" : "OFF")}");
-            if (!_showPath)
-                ClearPathVisualization();
-            else
-                RebuildPathVisualization();
+            if (keyEvent.Keycode == Key.F1)
+            {
+                _showPath = !_showPath;
+                GD.Print($"Path visualization: {(_showPath ? "ON" : "OFF")}");
+                if (!_showPath)
+                    ClearPathVisualization();
+                else
+                    RebuildPathVisualization();
+            }
+            else if (keyEvent.Keycode == Key.F2 && _pathfinder != null)
+            {
+                _pathfinder.AllowDiagonals = !_pathfinder.AllowDiagonals;
+                GD.Print($"Diagonal movement: {(_pathfinder.AllowDiagonals ? "ON" : "OFF")}");
+            }
         }
     }
 
