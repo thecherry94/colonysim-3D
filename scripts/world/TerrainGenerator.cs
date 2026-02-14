@@ -25,6 +25,7 @@ public class TerrainGenerator
     private readonly FastNoiseLite _moistureNoise;
     private readonly FastNoiseLite _riverWidthNoise;
     private readonly int _seed;
+    public int Seed => _seed;
     private readonly CaveGenerator _caveGenerator;
     private readonly GeologyGenerator _geologyGenerator;
     private readonly OreGenerator _oreGenerator;

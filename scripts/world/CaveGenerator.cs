@@ -12,9 +12,15 @@ using Godot;
 ///    Strong surface protection keeps caves deep; entrances punch through.
 ///
 /// 2. CHEESE CAVERNS: Ridged-noise field for larger open chambers, only very
-///    deep underground (25+ blocks below surface). Depth-scaled threshold.
+///    deep underground (45+ blocks below surface). Depth-scaled threshold.
 ///
 /// 3. NOODLE TUNNELS: Very thin connecting passages deep underground.
+///
+/// LAYER SEPARATORS: Periodic cosine-based Y pinch creates solid rock floors
+/// every ~25 blocks, producing distinct cave layers (like Dwarf Fortress cavern
+/// layers) instead of one continuous void from top to bottom. A 2D noise
+/// offsets the pinch Y-position per column so floors undulate naturally.
+/// All three systems are suppressed at pinch centers.
 ///
 /// Cave entrances are clearly visible holes in the surface — players see them
 /// from above, but colonists must mine to reach the deeper networks.
@@ -28,6 +34,7 @@ public class CaveGenerator
     private readonly FastNoiseLite _noodleNoise1;
     private readonly FastNoiseLite _noodleNoise2;
     private readonly FastNoiseLite _entranceNoise;
+    private readonly FastNoiseLite _layerOffsetNoise;
 
     // === Spaghetti tunnel parameters ===
     // 1-octave noise: full [-1,1] range, smooth continuous isosurfaces.
@@ -46,13 +53,27 @@ public class CaveGenerator
     // === Cheese cavern parameters ===
     // Ridged noise for connected chamber shapes. Only very deep underground.
     // Depth-scaled threshold: deeper = lower threshold = bigger caverns.
-    // Scaled for deep world (~120 blocks underground).
+    // Tuned for deep world (~120 blocks underground).
+    // Previous values (0.85→0.55 over 40-100) caused 89% air at depth 100 — catastrophically hollow.
+    // New values create distinct chambers (5-15% air at depth) that grow modestly with depth.
     private const float CavernFrequency = 0.018f;
-    private const float CavernBaseThreshold = 0.85f;   // at min depth: very rare tiny pockets
-    private const float CavernDeepThreshold = 0.55f;    // at full depth: large grand chambers
-    private const int CavernMinDepth = 40;              // caverns only 40+ blocks below surface
-    private const int CavernFullDepth = 100;            // depth where threshold reaches minimum
-    private const float CavernYSquash = 0.35f;
+    private const float CavernBaseThreshold = 0.90f;    // at min depth: very rare tiny pockets
+    private const float CavernDeepThreshold = 0.82f;    // at full depth: grand chambers (~8-10% carve, ~30-35% air with all systems)
+    private const int CavernMinDepth = 45;              // caverns only 45+ blocks below surface
+    private const int CavernFullDepth = 120;            // slower ramp-up over 75 blocks (was 60)
+    private const float CavernYSquash = 0.50f;          // less extreme horizontal stretch (was 0.35)
+
+    // === Cave layer separators ===
+    // Periodic Y-based pinch creates solid rock floors that separate caves into distinct layers.
+    // Without this, cheese caverns form one continuous void from top to bottom.
+    // The pinch uses a cosine wave on worldY: at pinch centers (cos ≈ 1), the threshold
+    // is pushed toward 1.0 (almost no carving). Between pinch centers, caves open normally.
+    // Layer period of 25 blocks = ~4-5 cave layers across 120 blocks of underground.
+    // PinchWidth controls the solid floor thickness (higher = thinner floors).
+    // PinchStrength controls how aggressively floors suppress carving (0-1, higher = more solid).
+    private const float CaveLayerPeriod = 25.0f;        // blocks between layer floors
+    private const float CaveLayerPinchStrength = 0.85f;  // how much pinch tightens the threshold (0=none, 1=full)
+    private const float CaveLayerPinchWidth = 3.0f;      // sharpness: higher = thinner solid floors
 
     // === Noodle tunnel parameters ===
     // Very thin high-frequency tunnels that connect the other systems.
@@ -61,6 +82,12 @@ public class CaveGenerator
     private const float NoodleThreshold1 = 0.05f;  // very tight = very thin
     private const float NoodleThreshold2 = 0.05f;
     private const int NoodleMinDepth = 25;          // only deep underground
+
+    // === Deep attenuation ===
+    // Spaghetti and noodle tunnels thin out at extreme depth where cheese caverns dominate.
+    // Prevents OR-logic from combining all three systems into near-total voidification.
+    private const int DeepAttenuationStart = 60;   // start thinning spaghetti/noodles here
+    private const int DeepAttenuationEnd = 100;    // fully attenuated (50% strength) at this depth
 
     // === Surface protection ===
     // Strong protection keeps the top layers solid. Caves live deep.
@@ -122,10 +149,22 @@ public class CaveGenerator
         _entranceNoise.Frequency = EntranceFrequency;
         _entranceNoise.FractalType = FastNoiseLite.FractalTypeEnum.None;
 
+        // Layer offset noise: 2D noise that shifts the layer separator Y-position
+        // per XZ column so cave floors undulate naturally (±5 blocks) instead of
+        // being perfectly flat planes.
+        _layerOffsetNoise = new FastNoiseLite();
+        _layerOffsetNoise.Seed = seed + 1200;
+        _layerOffsetNoise.NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth;
+        _layerOffsetNoise.Frequency = 0.02f;
+        _layerOffsetNoise.FractalType = FastNoiseLite.FractalTypeEnum.None;
+
         GD.Print($"CaveGenerator initialized: spaghetti(t={CaveThreshold1}/{CaveThreshold2}, " +
                  $"f={Cave1Frequency}/{Cave2Frequency}, 1-octave), " +
-                 $"caverns(ridged, f={CavernFrequency}, t={CavernBaseThreshold}-{CavernDeepThreshold}), " +
+                 $"caverns(ridged, f={CavernFrequency}, t={CavernBaseThreshold}-{CavernDeepThreshold}, " +
+                 $"depth={CavernMinDepth}-{CavernFullDepth}, ySquash={CavernYSquash}), " +
+                 $"layers(period={CaveLayerPeriod}, pinch={CaveLayerPinchStrength}, width={CaveLayerPinchWidth}), " +
                  $"noodles(t={NoodleThreshold1}, f={NoodleFrequency1}/{NoodleFrequency2}), " +
+                 $"deepAtten({DeepAttenuationStart}-{DeepAttenuationEnd}→50%), " +
                  $"surface(minDepth={CaveMinDepth}, fade={CaveFadeRange}), " +
                  $"entrances(thresh={EntranceThreshold}, freq={EntranceFrequency})");
     }
@@ -179,6 +218,19 @@ public class CaveGenerator
                     0f, 1f);
                 float cavernThresh = Mathf.Lerp(CavernBaseThreshold, CavernDeepThreshold, depthT);
 
+                // Layer separators: periodic cosine pinch creates solid rock floors
+                // between cave layers. 2D noise offsets the Y position per column
+                // so floors undulate naturally (±5 blocks) instead of flat planes.
+                float layerOffset = _layerOffsetNoise.GetNoise2D(worldX, worldZ) * 5f;
+                float layerPhase = (worldY + layerOffset) / CaveLayerPeriod * Mathf.Pi * 2f;
+                // cos = 1.0 at pinch centers (solid floors), cos = -1.0 between (open caves)
+                float cosVal = Mathf.Cos(layerPhase);
+                // Sharpen the pinch: raise to a power so only narrow bands near cos≈1 are affected
+                // pinchFactor: 0 = no pinch (open cave), 1 = full pinch (solid floor)
+                float pinchFactor = Mathf.Pow(Mathf.Max(cosVal, 0f), CaveLayerPinchWidth);
+                // Push threshold toward 1.0 at pinch centers (suppresses all carving)
+                cavernThresh = Mathf.Lerp(cavernThresh, 1.0f, pinchFactor * CaveLayerPinchStrength);
+
                 float cavernY = worldY * CavernYSquash;
                 float cavernVal = _cavernNoise.GetNoise3D(worldX, cavernY, worldZ);
                 float cavernNorm = (cavernVal + 1f) * 0.5f;
@@ -189,12 +241,46 @@ public class CaveGenerator
                 }
             }
 
+            // === Deep attenuation factor ===
+            // At extreme depth, spaghetti and noodle tunnels thin out to avoid
+            // combining with cheese caverns for near-total voidification.
+            // Shrinks thresholds to 50% at DeepAttenuationEnd depth.
+            float deepAtten = 1.0f;
+            if (depthBelow >= DeepAttenuationStart)
+            {
+                float t = Mathf.Clamp(
+                    (float)(depthBelow - DeepAttenuationStart) / (DeepAttenuationEnd - DeepAttenuationStart),
+                    0f, 1f);
+                deepAtten = Mathf.Lerp(1.0f, 0.5f, t);
+            }
+
+            // === Layer separator suppression for spaghetti/noodle ===
+            // In the deep zone where cheese caverns exist, strongly suppress spaghetti/noodle
+            // at layer separator Y-levels. Without this, OR-logic lets thin tunnels punch
+            // tiny holes through the solid floors, creating visible leaks.
+            // Lerp to 0.1 = nearly zero carving at floor centers. Rare tunnels still
+            // slip through at the edges of the pinch zone where pinchFactor < 1.
+            float tunnelLayerSuppression = 1.0f;
+            if (depthBelow >= CavernMinDepth)
+            {
+                float layerOffset = _layerOffsetNoise.GetNoise2D(worldX, worldZ) * 5f;
+                float layerPhase = (worldY + layerOffset) / CaveLayerPeriod * Mathf.Pi * 2f;
+                float cosVal = Mathf.Cos(layerPhase);
+                float pinchFactor = Mathf.Pow(Mathf.Max(cosVal, 0f), CaveLayerPinchWidth);
+                // Strong suppression: tunnels at 10% strength at pinch centers
+                // Connecting passages form naturally at the pinch edges (pinchFactor 0.3-0.7)
+                // where suppression is partial, not at the solid core
+                tunnelLayerSuppression = Mathf.Lerp(1.0f, 0.1f, pinchFactor);
+            }
+
             // === System 2: Noodle tunnels (deep connecting passages) ===
             if (depthBelow >= NoodleMinDepth)
             {
+                float nt1 = NoodleThreshold1 * deepAtten * tunnelLayerSuppression;
+                float nt2 = NoodleThreshold2 * deepAtten * tunnelLayerSuppression;
                 float nn1 = _noodleNoise1.GetNoise3D(worldX, squashedY, worldZ);
                 float nn2 = _noodleNoise2.GetNoise3D(worldX, squashedY, worldZ);
-                if (Mathf.Abs(nn1) < NoodleThreshold1 && Mathf.Abs(nn2) < NoodleThreshold2)
+                if (Mathf.Abs(nn1) < nt1 && Mathf.Abs(nn2) < nt2)
                 {
                     blocks[lx, ly, lz] = BlockType.Air;
                     continue;
@@ -215,8 +301,9 @@ public class CaveGenerator
                     (depthBelow - CaveMinDepth) / (float)CaveFadeRange, 0f, 1f);
             }
 
-            float t1 = CaveThreshold1 * depthFactor;
-            float t2 = CaveThreshold2 * depthFactor;
+            // Apply deep attenuation and layer suppression to spaghetti tunnels too
+            float t1 = CaveThreshold1 * depthFactor * deepAtten * tunnelLayerSuppression;
+            float t2 = CaveThreshold2 * depthFactor * deepAtten * tunnelLayerSuppression;
 
             float n1 = _caveNoise1.GetNoise3D(worldX, squashedY, worldZ);
             float n2 = _caveNoise2.GetNoise3D(worldX, squashedY, worldZ);

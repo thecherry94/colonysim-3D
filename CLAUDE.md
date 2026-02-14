@@ -228,9 +228,13 @@ Three-layer Minecraft-inspired cave system combined with OR logic (any system ca
 
 **Spaghetti tunnels:** Two independent 1-octave (`FractalType.None`) 3D simplex noise fields with 1:6 frequency ratio (0.01 and 0.06). A block is carved where `abs(noise1) < 0.10 AND abs(noise2) < 0.08`. Critical: 1-octave noise produces smooth continuous isosurfaces — FBM fragments them into disconnected pockets. Asymmetric thresholds. Y-squash (0.5) makes tunnels prefer horizontal. Carved volume ≈ 3.2%.
 
-**Cheese caverns:** Ridged-noise field (freq 0.018, 1 ridged octave, seed+900) creates larger open chambers very deep underground (40+ blocks below surface). Depth-scaled threshold: Lerp(0.85, 0.55) from 40→100 blocks depth — deeper = bigger grand chambers. Heavy Y-squash (0.35) makes caverns wide and flat.
+**Cheese caverns:** Ridged-noise field (freq 0.018, 1 ridged octave, seed+900) creates larger open chambers very deep underground (45+ blocks below surface). Depth-scaled threshold: Lerp(0.90, 0.82) from 45→120 blocks depth — deeper = bigger chambers but controlled (~30-35% total air at max depth including all cave systems). Y-squash (0.50) creates wide chambers without extreme flattening. Previous values (0.85→0.55 over 40-100) caused 89% air at depth 100 — catastrophically hollow.
 
 **Noodle tunnels:** Very thin connecting passages (freq 0.03/0.09, thresholds 0.05/0.05) only 25+ blocks below surface. Connect the spaghetti and cavern networks.
+
+**Deep attenuation:** Spaghetti and noodle tunnels thin out at extreme depth (60-100 blocks below surface, thresholds reduced to 50%) to prevent OR-logic from combining all three cave systems into near-total voidification.
+
+**Cave layer separators:** A periodic cosine-based Y pinch creates solid rock floors every ~25 blocks (CaveLayerPeriod=25), producing 4-5 distinct cave layers across 120 blocks of underground (like Dwarf Fortress cavern layers) instead of one continuous void from top to bottom. At pinch centers (cos≈1), the cheese cavern threshold is pushed toward 1.0, suppressing carving almost entirely. Between pinch centers, caves open normally. A 2D noise (freq 0.02, seed+1200) offsets the pinch Y-position by ±5 blocks per column so floors undulate naturally instead of flat planes. Spaghetti and noodle tunnels get a gentler suppression at pinch centers (50% strength instead of near-zero) so they can still punch through floors as connecting passages between cave layers — creating the vertical connectivity that makes exploration interesting without the wholesale floor-to-ceiling voids.
 
 **Cave entrances:** 2D noise (freq 0.008, threshold 0.52) punches clearly visible holes through surface protection, creating openings players can spot from above. Only above WaterLevel+3.
 
@@ -487,6 +491,7 @@ colonysim-3d/
 │   │   ├── OreGenerator.cs               # Tier 1 noise-cluster ore deposits (Phase A)
 │   │   ├── TreeGenerator.cs              # Deterministic grid-based tree placement
 │   │   ├── CaveGenerator.cs              # Dual-threshold 3D noise cave carving
+│   │   ├── WorldGenAnalyzer.cs           # Diagnostic: samples terrain, saves reports to diagnostics/
 │   │   ├── Biome.cs                      # BiomeType enum, BiomeData struct, BiomeTable
 │   │   └── Block.cs                      # BlockType enum (27 types) + BlockData utilities
 │   ├── navigation/
@@ -498,6 +503,7 @@ colonysim-3d/
 │   │   └── BlockInteraction.cs           # Mouse raycast, block removal, colonist commands
 │   └── camera/
 │       ├── CameraController.cs           # RTS camera (pan, zoom, rotate, Y-slice controls)
+│       ├── FreeFlyCamera.cs              # Noclip free-fly camera for cave exploration (F4 toggle)
 │       └── SliceState.cs                 # Global Y-level slice state (static class)
 └── godot-docs-master/                    # Local Godot 4.6 docs (reference)
 ```
@@ -580,13 +586,18 @@ colonysim-3d/
 
 | Key | Action |
 |-----|--------|
-| WASD / Arrow keys | Pan camera |
-| Scroll wheel | Zoom in/out |
-| Middle mouse + drag | Rotate camera |
+| WASD / Arrow keys | Pan camera (RTS) / Move (free-fly) |
+| Scroll wheel | Zoom in/out (RTS) / Adjust speed (free-fly) |
+| Middle mouse + drag | Rotate camera (RTS) |
+| Mouse | Look around (free-fly, captured) |
+| Space / Ctrl | Fly up / down (free-fly only) |
+| Shift | Speed boost 4x (free-fly only) |
 | Left click | Remove block |
 | Right click | Command colonist to walk to position |
 | F1 | Toggle path visualization (red line + markers) |
 | F2 | Toggle diagonal pathfinding movement |
+| F3 | Run WorldGenAnalyzer (saves report to diagnostics/ folder) |
+| F4 | Toggle free-fly noclip camera (for cave exploration) |
 | Page Down | Lower Y-level slice (reveal underground) |
 | Page Up | Raise Y-level slice |
 | Home | Disable Y-level slice (show full world) |

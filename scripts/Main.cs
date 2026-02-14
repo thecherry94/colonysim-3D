@@ -25,10 +25,15 @@ public partial class Main : Node3D
 
     private World _world;
     private CameraController _cameraController;
+    private FreeFlyCamera _freeFlyCamera;
+    private bool _freeFlyActive;
     private Colonist _colonist;
     private bool _colonistPhysicsEnabled;
     private Vector2I _spawnChunkXZ;
     private int _spawnSurfaceHeight;
+    private bool _f3WasPressed;
+    private bool _f4WasPressed;
+    private bool _analyzerRunning;
 
     public override void _Ready()
     {
@@ -59,6 +64,13 @@ public partial class Main : Node3D
             _cameraController.SetMaxWorldHeight(ChunkYLayers * Chunk.SIZE);
             var camera = _cameraController.Camera;
 
+            // Free-fly camera for cave exploration (toggled via F4)
+            _freeFlyCamera = new FreeFlyCamera();
+            _freeFlyCamera.Name = "FreeFlyCamera";
+            _freeFlyCamera.Position = _cameraController.Position;
+            AddChild(_freeFlyCamera);
+            _freeFlyCamera.SetMaxWorldHeight(ChunkYLayers * Chunk.SIZE);
+
             // Spawn colonist on the surface (physics frozen until chunks load)
             var spawnPos = new Vector3(spawnXZ.X + 0.5f, _spawnSurfaceHeight + 1.5f, spawnXZ.Y + 0.5f);
             var pathfinder = new VoxelPathfinder(_world);
@@ -87,8 +99,16 @@ public partial class Main : Node3D
     {
         if (Engine.IsEditorHint() || _cameraController == null || _world == null) return;
 
-        // Convert camera world position to chunk XZ coordinate
-        var camPos = _cameraController.Position;
+        // F4: Toggle free-fly camera (debounced)
+        bool f4Now = Input.IsKeyPressed(Key.F4);
+        if (f4Now && !_f4WasPressed)
+        {
+            ToggleFreeFly();
+        }
+        _f4WasPressed = f4Now;
+
+        // Use the active camera's position for chunk streaming
+        var camPos = _freeFlyActive ? _freeFlyCamera.Position : _cameraController.Position;
         int chunkX = Mathf.FloorToInt(camPos.X / Chunk.SIZE);
         int chunkZ = Mathf.FloorToInt(camPos.Z / Chunk.SIZE);
         _world.UpdateLoadedChunks(new Vector2I(chunkX, chunkZ), ChunkRenderDistance);
@@ -97,6 +117,62 @@ public partial class Main : Node3D
         if (!_colonistPhysicsEnabled && _colonist != null)
         {
             CheckSpawnChunksReady();
+        }
+
+        // F3: Run world gen analyzer (debounced, runs on background thread)
+        bool f3Now = Input.IsKeyPressed(Key.F3);
+        if (f3Now && !_f3WasPressed && !_analyzerRunning)
+        {
+            _analyzerRunning = true;
+            int seed = TerrainSeed;
+            int yLayers = ChunkYLayers;
+            int centerX = Mathf.FloorToInt(camPos.X);
+            int centerZ = Mathf.FloorToInt(camPos.Z);
+            GD.Print($"F3: Launching WorldGenAnalyzer at ({centerX}, {centerZ})...");
+
+            // Run on background thread to avoid freezing the game
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    WorldGenAnalyzer.Analyze(centerX, centerZ, seed, yLayers);
+                }
+                catch (System.Exception ex)
+                {
+                    GD.PrintErr($"WorldGenAnalyzer error: {ex.Message}");
+                }
+                finally
+                {
+                    _analyzerRunning = false;
+                }
+            });
+        }
+        _f3WasPressed = f3Now;
+    }
+
+    /// <summary>
+    /// Toggle between RTS camera and free-fly noclip camera.
+    /// Free-fly starts at the RTS camera's current position.
+    /// </summary>
+    private void ToggleFreeFly()
+    {
+        if (_freeFlyCamera == null) return;
+
+        _freeFlyActive = !_freeFlyActive;
+
+        if (_freeFlyActive)
+        {
+            // Switch to free-fly: position at RTS camera's look target
+            _freeFlyCamera.Position = _cameraController.Position;
+            _freeFlyCamera.Activate();
+            GD.Print("Camera: switched to FREE-FLY (F4 to return, WASD+mouse, Shift=fast, Space/Ctrl=up/down, scroll=speed)");
+        }
+        else
+        {
+            // Switch back to RTS
+            _freeFlyCamera.Deactivate();
+            _cameraController.Camera.MakeCurrent();
+            GD.Print("Camera: switched to RTS");
         }
     }
 

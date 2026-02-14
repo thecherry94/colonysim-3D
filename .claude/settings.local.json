@@ -27,7 +27,19 @@
       "WebFetch(domain:discussions.unity.com)",
       "WebFetch(domain:forum.playboundless.com)",
       "WebFetch(domain:www.alanzucconi.com)",
-      "WebFetch(domain:www.jdhwilkins.com)"
+      "WebFetch(domain:www.jdhwilkins.com)",
+      "WebFetch(domain:nickmcd.me)",
+      "WebFetch(domain:misode.github.io)",
+      "WebFetch(domain:wiki.vintagestory.at)",
+      "WebFetch(domain:www.steamnews.org)",
+      "WebFetch(domain:cybrancee.com)",
+      "WebFetch(domain:dwarffortresswiki.org)",
+      "WebFetch(domain:terrafirmacraft.github.io)",
+      "WebFetch(domain:pvigier.github.io)",
+      "WebFetch(domain:www.gamedev.net)",
+      "WebFetch(domain:www.planetminecraft.com)",
+      "WebFetch(domain:mcreator.net)",
+      "mcp__Desktop_Commander__get_file_info"
     ]
   }
 }

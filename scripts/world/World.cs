@@ -112,6 +112,16 @@ public partial class World : Node3D
     }
 
     /// <summary>
+    /// Get the terrain seed (for diagnostics). Returns 0 if no generator set.
+    /// </summary>
+    public int GetSeed() => _terrainGenerator?.Seed ?? 0;
+
+    /// <summary>
+    /// Get the number of vertical chunk layers.
+    /// </summary>
+    public int GetYChunkLayers() => _yChunkLayers;
+
+    /// <summary>
     /// Returns the surface height at a world X/Z coordinate.
     /// Used for positioning camera, colonist spawn, etc.
     /// </summary>
