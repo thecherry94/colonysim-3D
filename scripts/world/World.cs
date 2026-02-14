@@ -16,7 +16,7 @@ public partial class World : Node3D
 {
     private readonly Dictionary<Vector3I, Chunk> _chunks = new();
     private TerrainGenerator _terrainGenerator;
-    private int _yChunkLayers = 4;
+    private int _yChunkLayers = 12;
 
     // Chunk streaming state
     private Vector2I? _lastCameraChunkXZ;

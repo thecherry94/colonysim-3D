@@ -36,10 +36,10 @@ public partial class CameraController : Node3D
     private const float MaxPitch = -0.15f; // near horizontal
 
     // Y-level slice
-    private int _maxSliceY = 128; // default, updated via SetMaxWorldHeight()
+    private int _maxSliceY = 192; // default, updated via SetMaxWorldHeight()
     private const int MinSliceY = 1;
     private const int SliceStep = 1; // blocks per Page Up/Down press
-    private const int DefaultStartSliceY = 70; // first press starts near typical surface height
+    private const int DefaultStartSliceY = 155; // first press starts near typical surface height
 
     public Camera3D Camera => _camera;
 

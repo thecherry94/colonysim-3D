@@ -6,11 +6,11 @@ using Godot;
 /// Generates geological rock layers based on depth below surface and horizontal
 /// province noise. Replaces uniform Stone underground with varied rock types.
 ///
-/// Depth Bands (measured from surface):
-///   Soil:        0-3 blocks  — handled by existing biome subsurface logic
-///   Upper Stone: 4-20 blocks — Sedimentary: Limestone, Sandstone, Mudstone
-///   Mid Stone:   20-45 blocks — Igneous/Metamorphic: Granite, Basalt, Andesite, Marble, Slate
-///   Deep Stone:  45+ blocks  — Deepstone + Quartzite pockets
+/// Depth Bands (measured from surface, scaled for deep world ~120 blocks underground):
+///   Soil:        0-3 blocks   — handled by existing biome subsurface logic
+///   Upper Stone: 4-40 blocks  — Sedimentary: Limestone, Sandstone, Mudstone
+///   Mid Stone:   40-100 blocks — Igneous/Metamorphic: Granite, Basalt, Andesite, Marble, Slate
+///   Deep Stone:  100+ blocks  — Deepstone + Quartzite pockets
 ///
 /// Province Noise (2D, freq 0.002):
 ///   Selects which rock type dominates within each band. Different regions have
@@ -18,7 +18,7 @@ using Godot;
 ///   hosted by specific rock types).
 ///
 /// Band Boundary Noise (2D, freq 0.015):
-///   Offsets depth band transitions by ±4 blocks to prevent flat artificial lines.
+///   Offsets depth band transitions by ±8 blocks to prevent flat artificial lines.
 ///
 /// Rock Blob Noise (3D, freq 0.05):
 ///   Creates pockets of secondary rock within the dominant rock matrix (70/30 split).
@@ -33,13 +33,14 @@ public class GeologyGenerator
     private readonly FastNoiseLite _rockBlobNoise;     // 3D: secondary rock type pockets
 
     // Depth band boundaries (blocks below surface, before boundary noise offset)
+    // Scaled for deep world (12 Y layers = 192 blocks, ~120-130 underground)
     private const int SoilDepth = 3;          // 0-3: existing biome subsurface
-    private const int UpperStoneDepth = 20;   // 4-20: sedimentary
-    private const int MidStoneDepth = 45;     // 20-45: igneous/metamorphic
-    // 45+: deep stone
+    private const int UpperStoneDepth = 40;   // 4-40: sedimentary (Tier 1 ores)
+    private const int MidStoneDepth = 100;    // 40-100: igneous/metamorphic (future Tier 2 ores)
+    // 100+: deep stone (Deepstone, future Tier 3 ores, lava)
 
     // Boundary noise amplitude (±blocks offset)
-    private const float BoundaryAmplitude = 4.0f;
+    private const float BoundaryAmplitude = 8.0f;
 
     // Province noise thresholds for rock type selection (divides [0,1] into 3 zones)
     private const float ProvinceThreshold1 = 0.33f;

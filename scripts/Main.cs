@@ -12,10 +12,10 @@ public partial class Main : Node3D
     public int ChunkRenderDistance { get; set; } = 5;
 
     /// <summary>
-    /// Number of vertical chunk layers. layers=4 → 64 blocks tall.
+    /// Number of vertical chunk layers. layers=12 → 192 blocks tall.
     /// </summary>
-    [Export(PropertyHint.Range, "1,8,1")]
-    public int ChunkYLayers { get; set; } = 4;
+    [Export(PropertyHint.Range, "1,16,1")]
+    public int ChunkYLayers { get; set; } = 12;
 
     /// <summary>
     /// Seed for terrain generation. Different seeds produce different worlds.

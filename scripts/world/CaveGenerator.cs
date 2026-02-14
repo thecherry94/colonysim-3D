@@ -46,11 +46,12 @@ public class CaveGenerator
     // === Cheese cavern parameters ===
     // Ridged noise for connected chamber shapes. Only very deep underground.
     // Depth-scaled threshold: deeper = lower threshold = bigger caverns.
+    // Scaled for deep world (~120 blocks underground).
     private const float CavernFrequency = 0.018f;
     private const float CavernBaseThreshold = 0.85f;   // at min depth: very rare tiny pockets
-    private const float CavernDeepThreshold = 0.62f;    // at full depth: moderate chambers
-    private const int CavernMinDepth = 25;              // caverns only 25+ blocks below surface
-    private const int CavernFullDepth = 50;             // depth where threshold reaches minimum
+    private const float CavernDeepThreshold = 0.55f;    // at full depth: large grand chambers
+    private const int CavernMinDepth = 40;              // caverns only 40+ blocks below surface
+    private const int CavernFullDepth = 100;            // depth where threshold reaches minimum
     private const float CavernYSquash = 0.35f;
 
     // === Noodle tunnel parameters ===
@@ -59,12 +60,12 @@ public class CaveGenerator
     private const float NoodleFrequency2 = 0.09f;
     private const float NoodleThreshold1 = 0.05f;  // very tight = very thin
     private const float NoodleThreshold2 = 0.05f;
-    private const int NoodleMinDepth = 15;          // only deep underground
+    private const int NoodleMinDepth = 25;          // only deep underground
 
     // === Surface protection ===
     // Strong protection keeps the top layers solid. Caves live deep.
-    private const int CaveMinDepth = 15;            // no caves within 15 blocks of surface — colonists must mine
-    private const int CaveFadeRange = 10;           // gradual fade-in over 10 blocks below that
+    private const int CaveMinDepth = 20;            // no caves within 20 blocks of surface — colonists must mine
+    private const int CaveFadeRange = 15;           // gradual fade-in over 15 blocks below that
 
     // === Entrance generation ===
     // Entrances punch clearly visible holes through the surface protection.

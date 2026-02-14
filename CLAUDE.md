@@ -66,7 +66,7 @@ Chunks use `StaticBody3D` with `ConcavePolygonShape3D` for collision, but **only
 - Collision mesh faces are always cached in `_lastCollisionFaces` when mesh data is applied, so `EnableCollision()` can apply them instantly without re-meshing.
 - `World.UpdateLoadedChunks()` includes a collision update pass that iterates loaded chunks and enables/disables collision based on XZ distance from the camera chunk.
 
-**Impact at render distance 20:** 13,448 total chunks, but only ~648 have collision (81 horizontal × 8 Y layers within radius 4). This removes ~25,600 scene nodes and reduces physics broadphase processing by ~95%.
+**Impact at render distance 20:** ~27,000 total chunks (41×41 horizontal × 12 Y layers, but ~40% are empty sky), with only ~972 having collision (81 horizontal × 12 Y layers within radius 4). Distance-based collision removes the majority of scene nodes and reduces physics broadphase processing by ~95%.
 
 **Future consideration:** When colonists operate outside camera range (autonomous jobs), they may need collision in their area. Options include abstract simulation (no physics) or local collision zones around each colonist. This is deferred to the multi-colonist phase.
 
@@ -172,11 +172,11 @@ Multi-layer noise terrain using 7 `FastNoiseLite` layers:
 - **Temperature** (freq 0.0008) and **Moisture** (freq 0.001): drive biome classification
 - **River Width** (freq 0.018): modulates river width per-column from 0.5× to 2.0× base width, creating narrow creek sections and wider river/pool sections
 
-Height range: 0-90 across multiple Y chunk layers (default 8 layers = 128 blocks tall). Water level: 45. Tall terrain (base 50-70, amplitude 5-20) creates 45-65 blocks of underground stone for deep cave networks. Snow caps on mountains at height >= 82.
+Height range: 0-175 across 12 Y chunk layers (192 blocks tall). Water level: 130. Terrain surface sits at Y 135-175 (base 135-155, amplitude 5-20), creating **~120-140 blocks of underground** for deep cave networks, geological variety, and ore deposits. Snow caps on mountains at height >= MaxHeight-8. The deep world design is inspired by Terraria's depth-as-progression — surface → shallow caves → deep caves → deepstone.
 
 **Variable-width rivers:** River width is modulated per-column by a separate noise layer. `RiverWidth` (0.04) and `RiverBankWidth` (0.16) are multiplied by `RiverWidthMod` (0.5–2.0), creating narrow creeks (half-width), normal rivers, and wider pools/rivers (double-width) along the same channel. The width noise (freq 0.018) changes roughly every ~55 blocks, so 2-3 width transitions are visible per stretch.
 
-**Minecraft-style water level:** All water (ocean and rivers) sits at the global `WaterLevel` (45). Rivers that carve below sea level naturally fill with water. Rivers above sea level become dry valleys — this is the same approach Minecraft uses and avoids water wall artifacts at boundaries. No per-section local water levels.
+**Minecraft-style water level:** All water (ocean and rivers) sits at the global `WaterLevel` (130). Rivers that carve below sea level naturally fill with water. Rivers above sea level become dry valleys — this is the same approach Minecraft uses and avoids water wall artifacts at boundaries. No per-section local water levels.
 
 **Biome system:** 6 biomes (Grassland, Forest, Desert, Tundra, Swamp, Mountains) selected by temperature, moisture, and continentalness. Each biome has distinct surface/subsurface blocks, height offsets, amplitude scales, and detail scales defined in `BiomeTable`. Biome boundaries use weighted blending of the 4 nearest biome heights (by Euclidean distance in temp/moisture space) to avoid hard terrain seams. See `Biome.cs` for definitions and `TerrainGenerator.cs` for blending logic.
 
@@ -228,14 +228,14 @@ Three-layer Minecraft-inspired cave system combined with OR logic (any system ca
 
 **Spaghetti tunnels:** Two independent 1-octave (`FractalType.None`) 3D simplex noise fields with 1:6 frequency ratio (0.01 and 0.06). A block is carved where `abs(noise1) < 0.10 AND abs(noise2) < 0.08`. Critical: 1-octave noise produces smooth continuous isosurfaces — FBM fragments them into disconnected pockets. Asymmetric thresholds. Y-squash (0.5) makes tunnels prefer horizontal. Carved volume ≈ 3.2%.
 
-**Cheese caverns:** Ridged-noise field (freq 0.018, 1 ridged octave, seed+900) creates larger open chambers very deep underground (25+ blocks below surface). Depth-scaled threshold: Lerp(0.85, 0.62) from 25→50 blocks depth — deeper = bigger caverns. Heavy Y-squash (0.35) makes caverns wide and flat.
+**Cheese caverns:** Ridged-noise field (freq 0.018, 1 ridged octave, seed+900) creates larger open chambers very deep underground (40+ blocks below surface). Depth-scaled threshold: Lerp(0.85, 0.55) from 40→100 blocks depth — deeper = bigger grand chambers. Heavy Y-squash (0.35) makes caverns wide and flat.
 
-**Noodle tunnels:** Very thin connecting passages (freq 0.03/0.09, thresholds 0.05/0.05) only 15+ blocks below surface. Connect the spaghetti and cavern networks.
+**Noodle tunnels:** Very thin connecting passages (freq 0.03/0.09, thresholds 0.05/0.05) only 25+ blocks below surface. Connect the spaghetti and cavern networks.
 
 **Cave entrances:** 2D noise (freq 0.008, threshold 0.52) punches clearly visible holes through surface protection, creating openings players can spot from above. Only above WaterLevel+3.
 
 **Safety rules:**
-- **Surface protection:** No caves within `CaveMinDepth=15` blocks of surface — colonists must mine down to reach caves. Caves fade in over `CaveFadeRange=10` blocks below that.
+- **Surface protection:** No caves within `CaveMinDepth=20` blocks of surface — colonists must mine down to reach caves. Caves fade in over `CaveFadeRange=15` blocks below that.
 - **Floor protection:** No carving at `worldY <= 2` (bedrock).
 - **No water protection:** Caves extend below water level into deep stone for impressive deep networks.
 
@@ -259,7 +259,7 @@ Dwarf Fortress-style Y-level slicing lets the player see underground by hiding e
 
 **Raycast pierce-through:** When slicing is active, raycasts that hit blocks above the slice level fire continuation rays past the hit point until a valid (below-slice) hit is found. Loop limit of 10 prevents infinite loops.
 
-**Controls:** Page Down = lower slice (1 block per press, first press starts at Y=40), Page Up = raise slice (1 block per press), Home = disable slicing. Slice keys use `Input.IsKeyPressed` polling with debounce in `_Process` (not `_UnhandledInput`) to avoid event routing issues.
+**Controls:** Page Down = lower slice (1 block per press, first press starts at Y=155 near typical surface), Page Up = raise slice (1 block per press), Home = disable slicing. Slice keys use `Input.IsKeyPressed` polling with debounce in `_Process` (not `_UnhandledInput`) to avoid event routing issues.
 
 ### 3.12 Colonist Spawn Safety
 
@@ -279,19 +279,19 @@ The colonist must not receive physics (gravity) until the chunks around it have 
 
 Underground rock types vary by **depth below surface** and **horizontal geological province**, replacing the previous uniform Stone fill. Inspired by Dwarf Fortress's geological layers and Vintage Story's geologic provinces.
 
-**Depth Bands** (measured from surface, boundaries offset ±4 blocks by 2D noise):
+**Depth Bands** (measured from surface, boundaries offset ±8 blocks by 2D noise):
 | Band | Depth | Rock Types | Character |
 |------|-------|-----------|-----------|
 | Soil | 0-3 | Dirt/Sand/Clay (existing biome subsurface) | Already implemented |
-| Upper Stone | 4-20 | Sedimentary: Limestone, Sandstone, Mudstone | Common ores (coal, iron) |
-| Mid Stone | 20-45 | Igneous/Metamorphic: Granite, Basalt, Andesite, Marble, Slate | Valuable ores |
-| Deep Stone | 45+ | Deepstone + Quartzite pockets | Rare ores, danger |
+| Upper Stone | 4-40 | Sedimentary: Limestone, Sandstone, Mudstone | Tier 1 ores (coal, iron) |
+| Mid Stone | 40-100 | Igneous/Metamorphic: Granite, Basalt, Andesite, Marble, Slate | Future Tier 2 ores |
+| Deep Stone | 100+ | Deepstone + Quartzite pockets | Future Tier 3, lava |
 
 **Province Noise** (2D, freq 0.002): Selects which rock type dominates within each band. Province [0, 0.33): Limestone/Granite dominant. Province [0.33, 0.66): Sandstone/Basalt dominant. Province [0.66, 1.0]: Mudstone/Andesite dominant. Different regions have different geology — ores are hosted by specific rocks, so geology determines available resources.
 
 **Rock Blob Noise** (3D, freq 0.05): Creates pockets of secondary rock within the dominant matrix (~25-30% volume). Breaks up visual monotony within bands.
 
-**Band Boundary Noise** (2D, freq 0.015): Offsets depth band transitions by ±4 blocks to create undulating boundaries instead of flat artificial lines.
+**Band Boundary Noise** (2D, freq 0.015): Offsets depth band transitions by ±8 blocks to create undulating boundaries instead of flat artificial lines.
 
 **Implementation:** `GeologyGenerator.cs` owns 3 noise instances. Single method `GetRockType(worldX, worldY, worldZ, surfaceY, province)` returns the appropriate `BlockType`. Called per-block from `GenerateChunkBlocks()` for blocks deeper than the soil layer. Province value is sampled once per column in `SampleColumn()` and stored in `ColumnSample.Province`.
 
@@ -301,10 +301,10 @@ Four Tier 1 ores placed as noise-based cluster deposits in the Upper Stone band.
 
 | Ore | BlockType ID | Depth | Host Rocks | Noise Freq | Threshold | Cluster Size |
 |-----|-------------|-------|-----------|-----------|-----------|-------------|
-| Coal | 23 | 5-30 | Sedimentary | 0.08 | 0.60 | 50-150 blocks |
-| Iron | 24 | 10-35 | Sedimentary | 0.10 | 0.65 | 30-80 blocks |
-| Copper | 25 | 5-25 | Any rock | 0.09 | 0.68 | 20-60 blocks |
-| Tin | 26 | 10-30 | Sed. + Meta. | 0.11 | 0.72 | 10-30 blocks |
+| Coal | 23 | 6-45 | Sedimentary | 0.08 | 0.60 | 50-150 blocks |
+| Iron | 24 | 12-55 | Sedimentary | 0.10 | 0.65 | 30-80 blocks |
+| Copper | 25 | 8-45 | Any rock | 0.09 | 0.68 | 20-60 blocks |
+| Tin | 26 | 15-50 | Sed. + Meta. | 0.11 | 0.72 | 10-30 blocks |
 
 **Host Rock Restriction** creates natural regional variation: areas with Granite underground (igneous) won't have iron or coal (which require sedimentary rock), but will have copper. This means different starting locations have different resource profiles.
 
@@ -430,7 +430,7 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 8 | A* pathfinding (8-connected, toggleable diagonals, clearance checks) | Done |
 | 9 | Colonist (CharacterBody3D state machine, path visualization) | Done |
 | 10 | RTS camera (WASD pan, scroll zoom, middle-mouse rotate) | Done |
-| 11 | Vertical chunks (configurable Y layers, 64-block default height) | Done |
+| 11 | Vertical chunks (configurable Y layers, 192-block default height) | Done |
 | 12 | Chunk streaming (camera-based load/unload, 16/frame budget) | Done |
 | 13 | Chunk data caching (in-memory cache of ALL chunks, eviction at 3x radius) | Done |
 | 14 | Biome system (6 biomes, temperature/moisture noise, height blending) | Done |
@@ -447,6 +447,7 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 25 | Variable-width rivers (width modulation noise, Minecraft-style global water level) | Done |
 | 26 | Geological layers (10 rock types, depth bands, province noise, boundary noise) | Done |
 | 27 | Tier 1 ore generation (Coal, Iron, Copper, Tin — noise clusters, host-rock restrictions) | Done |
+| 28 | Deep world (12 Y layers = 192 blocks, ~120 underground, scaled geology/caves/ores) | Done |
 
 ### Future Phases (not yet planned in detail):
 - Cave decoration (moss, glowing mushrooms, stalactites by depth — see WORLDGEN_PLAN.md Phase B)

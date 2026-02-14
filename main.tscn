@@ -12,8 +12,7 @@ tonemap_mode = 2
 
 [node name="Origin" type="Node3D" unique_id=453598688]
 script = ExtResource("1")
-ChunkRenderDistance = 20
-ChunkYLayers = 8
+ChunkRenderDistance = 15
 TerrainSeed = 42069
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=756719714]

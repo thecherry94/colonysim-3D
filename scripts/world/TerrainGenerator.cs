@@ -32,8 +32,8 @@ public class TerrainGenerator
     // Thread-local surface height cache for passing to CaveGenerator
     [ThreadStatic] private static int[] _surfaceHeightCache;
 
-    public const int WaterLevel = 45;
-    public const int MaxHeight = 90;
+    public const int WaterLevel = 130;
+    public const int MaxHeight = 175;
     private const float RiverWidth = 0.04f;
     private const float RiverBankWidth = 0.16f;
     private const int RiverDepth = 12; // max blocks river carves below surrounding terrain
@@ -260,8 +260,8 @@ public class TerrainGenerator
             out float heightOffset, out float ampScale, out float detScale);
 
         // Base height from continentalness + biome offset
-        // Taller terrain = more underground volume for caves
-        float baseHeight = Mathf.Lerp(50.0f, 70.0f, cSquared) + heightOffset;
+        // Surface sits in the upper third of the world, maximizing underground depth
+        float baseHeight = Mathf.Lerp(135.0f, 155.0f, cSquared) + heightOffset;
         float amplitude = Mathf.Lerp(5.0f, 20.0f, cSquared) * ampScale;
         float detailAmp = Mathf.Lerp(0.5f, 4.0f, s.CNorm) * detScale;
 
@@ -328,7 +328,7 @@ public class TerrainGenerator
         float cSquared = s.CNorm * s.CNorm;
         ComputeBlendedParams(s.TNorm, s.MNorm, s.CNorm,
             out float heightOffset, out float ampScale, out float detScale);
-        float baseH = Mathf.Lerp(50.0f, 70.0f, cSquared) + heightOffset;
+        float baseH = Mathf.Lerp(135.0f, 155.0f, cSquared) + heightOffset;
         float amp = Mathf.Lerp(5.0f, 20.0f, cSquared) * ampScale;
         float detAmp = Mathf.Lerp(0.5f, 4.0f, s.CNorm) * detScale;
         float naturalHeight = baseH + s.Elevation * amp + s.Detail * detAmp;
@@ -479,8 +479,8 @@ public class TerrainGenerator
             // Beach / water edge — always Sand
             return BlockType.Sand;
         }
-        // Mountain snow caps
-        if (biome == BiomeType.Mountains && surfaceHeight >= 82)
+        // Mountain snow caps (top ~8 blocks of max terrain height)
+        if (biome == BiomeType.Mountains && surfaceHeight >= MaxHeight - 8)
             return BlockType.Snow;
 
         return data.SurfaceBlock;

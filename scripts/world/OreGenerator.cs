@@ -7,10 +7,10 @@ using Godot;
 /// Each ore type has its own noise field, depth range, and host rock restrictions.
 ///
 /// Tier 1 Ores (Upper Stone band, early game):
-///   Coal:   large clusters (50-150 blocks), sedimentary rock only, depth 5-30
-///   Iron:   medium clusters (30-80 blocks), sedimentary rock only, depth 10-35
-///   Copper: medium clusters (20-60 blocks), any upper stone rock, depth 5-25
-///   Tin:    small clusters (10-30 blocks), sedimentary + metamorphic, depth 10-30
+///   Coal:   large clusters (50-150 blocks), sedimentary rock only, depth 6-45
+///   Iron:   medium clusters (30-80 blocks), sedimentary rock only, depth 12-55
+///   Copper: medium clusters (20-60 blocks), any upper stone rock, depth 8-45
+///   Tin:    small clusters (10-30 blocks), sedimentary + metamorphic, depth 15-50
 ///
 /// Ore placement runs AFTER geology fill but BEFORE cave carving, so ores
 /// naturally appear in cave walls when caves carve through ore deposits.
@@ -76,33 +76,34 @@ public class OreGenerator
     {
         // Check each ore in priority order (rarer ores checked first to avoid
         // being overwritten by common ones at overlapping depths)
+        // Depth ranges scaled for deep world (~120 blocks underground)
 
-        // Tin: depth 10-30, sedimentary + metamorphic host rocks, tight threshold
-        if (depthBelowSurface >= 10 && depthBelowSurface <= 30
+        // Tin: depth 15-50, sedimentary + metamorphic host rocks, tight threshold
+        if (depthBelowSurface >= 15 && depthBelowSurface <= 50
             && IsTinHost(currentRock))
         {
             float noise = _tinNoise.GetNoise3D(worldX, worldY, worldZ);
             if (noise > 0.72f) return BlockType.TinOre;
         }
 
-        // Copper: depth 5-25, any upper stone rock, medium threshold
-        if (depthBelowSurface >= 5 && depthBelowSurface <= 25
+        // Copper: depth 8-45, any upper stone rock, medium threshold
+        if (depthBelowSurface >= 8 && depthBelowSurface <= 45
             && IsUpperStoneRock(currentRock))
         {
             float noise = _copperNoise.GetNoise3D(worldX, worldY, worldZ);
             if (noise > 0.68f) return BlockType.CopperOre;
         }
 
-        // Iron: depth 10-35, sedimentary only, medium threshold
-        if (depthBelowSurface >= 10 && depthBelowSurface <= 35
+        // Iron: depth 12-55, sedimentary only, medium threshold
+        if (depthBelowSurface >= 12 && depthBelowSurface <= 55
             && IsSedimentary(currentRock))
         {
             float noise = _ironNoise.GetNoise3D(worldX, worldY, worldZ);
             if (noise > 0.65f) return BlockType.IronOre;
         }
 
-        // Coal: depth 5-30, sedimentary only, most common (lowest threshold)
-        if (depthBelowSurface >= 5 && depthBelowSurface <= 30
+        // Coal: depth 6-45, sedimentary only, most common (lowest threshold)
+        if (depthBelowSurface >= 6 && depthBelowSurface <= 45
             && IsSedimentary(currentRock))
         {
             float noise = _coalNoise.GetNoise3D(worldX, worldY, worldZ);
