@@ -131,6 +131,15 @@ public partial class World : Node3D
     }
 
     /// <summary>
+    /// Returns true if the given world position is in a river channel.
+    /// </summary>
+    public bool IsRiverAt(int worldX, int worldZ)
+    {
+        if (_terrainGenerator == null) return false;
+        return _terrainGenerator.IsRiverAt(worldX, worldZ);
+    }
+
+    /// <summary>
     /// Returns the biome at a world X/Z coordinate.
     /// </summary>
     public BiomeType GetBiome(int worldX, int worldZ)

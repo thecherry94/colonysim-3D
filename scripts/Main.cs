@@ -159,35 +159,53 @@ public partial class Main : Node3D
 
     /// <summary>
     /// Search in expanding squares from the center to find a position on dry land
-    /// (surface height above water level). Returns the (X, Z) world block coordinate.
+    /// that is NOT in a river channel. Prefers elevated positions (WaterLevel + 5)
+    /// but falls back to any dry non-river position. Returns the (X, Z) world block coordinate.
     /// </summary>
     private Vector2I FindDryLandNear(int centerX, int centerZ)
     {
+        const int minElevation = TerrainGenerator.WaterLevel + 5;
+        Vector2I? fallback = null;
+
         // Check center first
         int h = _world.GetSurfaceHeight(centerX, centerZ);
-        if (h > TerrainGenerator.WaterLevel)
+        if (h >= minElevation && !_world.IsRiverAt(centerX, centerZ))
             return new Vector2I(centerX, centerZ);
+        if (h > TerrainGenerator.WaterLevel && !_world.IsRiverAt(centerX, centerZ))
+            fallback = new Vector2I(centerX, centerZ);
 
         // Expand in rings up to 64 blocks out
         for (int radius = 1; radius <= 64; radius++)
         {
             for (int dx = -radius; dx <= radius; dx++)
             {
-                // Check the 4 edges of the square ring
                 int[] dzOptions = (dx == -radius || dx == radius)
                     ? GenerateRange(-radius, radius)
                     : new[] { -radius, radius };
 
                 foreach (int dz in dzOptions)
                 {
-                    h = _world.GetSurfaceHeight(centerX + dx, centerZ + dz);
-                    if (h > TerrainGenerator.WaterLevel)
-                        return new Vector2I(centerX + dx, centerZ + dz);
+                    int x = centerX + dx;
+                    int z = centerZ + dz;
+                    h = _world.GetSurfaceHeight(x, z);
+
+                    if (h <= TerrainGenerator.WaterLevel) continue;
+                    if (_world.IsRiverAt(x, z)) continue;
+
+                    if (h >= minElevation)
+                        return new Vector2I(x, z);
+
+                    fallback ??= new Vector2I(x, z);
                 }
             }
         }
 
-        // Fallback: just use center
+        if (fallback.HasValue)
+        {
+            GD.Print($"Spawn: using fallback dry land at {fallback.Value} (no elevated non-river position within 64 blocks)");
+            return fallback.Value;
+        }
+
         GD.Print("WARNING: No dry land found near spawn, using center");
         return new Vector2I(centerX, centerZ);
     }

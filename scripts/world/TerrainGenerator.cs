@@ -32,6 +32,7 @@ public class TerrainGenerator
     public const int MaxHeight = 90;
     private const float RiverWidth = 0.04f;
     private const float RiverBankWidth = 0.08f;
+    private const int RiverDepth = 6; // max blocks river carves below surrounding terrain
 
     // Biome blending: Gaussian weight sharpness. Higher = sharper biome borders.
     private const float BlendSharpness = 4.0f;
@@ -231,19 +232,23 @@ public class TerrainGenerator
 
         float rawHeight = baseHeight + s.Elevation * amplitude + s.Detail * detailAmp;
 
-        // River carving: only where terrain is above water and not mountainous
+        // River carving: only where terrain is above water and not mountainous.
+        // Channel depth is capped at RiverDepth blocks below surrounding terrain.
+        // Low elevations still reach water level; high elevations become shallow dry creeks.
         if (s.Continental <= 0.5f && rawHeight > WaterLevel + 1)
         {
             float absRiver = Mathf.Abs(s.River);
             if (absRiver < RiverWidth)
             {
-                rawHeight = WaterLevel - 1;
+                float channelFloor = Mathf.Max(WaterLevel - 1, rawHeight - RiverDepth);
+                rawHeight = channelFloor;
             }
             else if (absRiver < RiverBankWidth)
             {
+                float channelFloor = Mathf.Max(WaterLevel - 1, rawHeight - RiverDepth);
                 float t = (absRiver - RiverWidth) / (RiverBankWidth - RiverWidth);
                 t = t * t;
-                rawHeight = Mathf.Lerp(WaterLevel, rawHeight, t);
+                rawHeight = Mathf.Lerp(channelFloor, rawHeight, t);
             }
         }
 
@@ -258,6 +263,17 @@ public class TerrainGenerator
     {
         var sample = SampleColumn(worldX, worldZ);
         return ComputeHeight(sample);
+    }
+
+    /// <summary>
+    /// Returns true if the given world position is in a river channel.
+    /// Public API for spawn selection and other external queries.
+    /// </summary>
+    public bool IsRiverAt(int worldX, int worldZ)
+    {
+        var sample = SampleColumn(worldX, worldZ);
+        int height = ComputeHeight(sample);
+        return IsRiverChannel(sample, height);
     }
 
     /// <summary>

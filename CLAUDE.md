@@ -168,7 +168,7 @@ Multi-layer noise terrain using 5 `FastNoiseLite` layers:
 - **Continentalness** (freq 0.003): broad terrain category — lowlands, midlands, highlands
 - **Elevation** (freq 0.01): primary height variation, amplitude scaled by continentalness
 - **Detail** (freq 0.06): fine surface roughness, suppressed in flat areas
-- **River** (freq 0.005): rivers form where `abs(noise) ≈ 0`, only in non-mountainous terrain above water level
+- **River** (freq 0.005): rivers form where `abs(noise) ≈ 0`, only in non-mountainous terrain above water level. River depth is capped at `RiverDepth=6` blocks below surrounding terrain — low-elevation rivers reach water level (have water), high-elevation rivers become shallow dry creek valleys
 - **Temperature** (freq 0.004) and **Moisture** (freq 0.005): drive biome classification
 
 Height range: 0-90 across multiple Y chunk layers (default 8 layers = 128 blocks tall). Water level: 25. Tall terrain (base 50-70, amplitude 5-20) creates 45-65 blocks of underground stone for deep cave networks. Snow caps on mountains at height >= 82.
@@ -267,7 +267,7 @@ The colonist must not receive physics (gravity) until the chunks around it have 
 
 **Cave-safe height correction:** `World.GetSurfaceHeight()` uses `TerrainGenerator.GetHeight()` which evaluates noise — it doesn't account for caves carved below the surface. After chunks load, `Main.FindActualSurface()` scans downward through real `World.GetBlock()` data to find the highest solid block. This is the colonist's actual spawn Y.
 
-**Spawn origin:** The colonist spawns near world origin `(0, 0)` and `FindDryLandNear()` searches outward for dry land. The old formula `ChunkRenderDistance * 16 + 8` was an arbitrary offset from the pre-streaming era that could land in ocean depending on seed.
+**Spawn origin:** The colonist spawns near world origin `(0, 0)` and `FindDryLandNear()` searches outward for dry land. The old formula `ChunkRenderDistance * 16 + 8` was an arbitrary offset from the pre-streaming era that could land in ocean depending on seed. `FindDryLandNear()` also avoids river channels (via `World.IsRiverAt()`) and prefers elevated positions (`WaterLevel + 5`) to avoid spawning in valleys.
 
 ### 3.13 Why Build From Scratch (Not Use Existing Voxel Libraries)
 
