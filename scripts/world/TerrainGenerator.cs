@@ -5,7 +5,7 @@ using Godot;
 
 /// <summary>
 /// Multi-layer noise terrain generator with biome support.
-/// 6 noise layers create diverse biome-aware terrain with seamless transitions.
+/// 7 noise layers create diverse biome-aware terrain with seamless transitions.
 ///
 /// Layer 1 — Continentalness (freq 0.003): large-scale terrain category
 /// Layer 2 — Elevation (freq 0.01): primary height variation
@@ -13,6 +13,7 @@ using Godot;
 /// Layer 4 — River (freq 0.005): rivers form where abs(noise) ≈ 0
 /// Layer 5 — Temperature (freq 0.002): climate zones (cold ↔ hot)
 /// Layer 6 — Moisture (freq 0.0025): wet/dry variation
+/// Layer 7 — River Width (freq 0.018): modulates river width per-column (creeks ↔ wide rivers)
 /// </summary>
 public class TerrainGenerator
 {
@@ -22,17 +23,22 @@ public class TerrainGenerator
     private readonly FastNoiseLite _riverNoise;
     private readonly FastNoiseLite _temperatureNoise;
     private readonly FastNoiseLite _moistureNoise;
+    private readonly FastNoiseLite _riverWidthNoise;
     private readonly int _seed;
     private readonly CaveGenerator _caveGenerator;
 
     // Thread-local surface height cache for passing to CaveGenerator
     [ThreadStatic] private static int[] _surfaceHeightCache;
 
-    public const int WaterLevel = 25;
+    public const int WaterLevel = 45;
     public const int MaxHeight = 90;
     private const float RiverWidth = 0.04f;
-    private const float RiverBankWidth = 0.08f;
-    private const int RiverDepth = 6; // max blocks river carves below surrounding terrain
+    private const float RiverBankWidth = 0.16f;
+    private const int RiverDepth = 12; // max blocks river carves below surrounding terrain
+
+    // River width modulation: multiplier range for variable-width channels
+    private const float RiverWidthMin = 0.5f;   // narrowest = half base width (creeks)
+    private const float RiverWidthMax = 2.0f;    // widest = double base width (wide rivers)
 
     // Biome blending: Gaussian weight sharpness. Higher = sharper biome borders.
     private const float BlendSharpness = 4.0f;
@@ -55,9 +61,11 @@ public class TerrainGenerator
     {
         public readonly float Continental, Elevation, Detail, River;
         public readonly float CNorm, TNorm, MNorm;
+        public readonly float RiverWidthMod;    // width multiplier (0.5–2.0) for variable-width channels
 
         public ColumnSample(float continental, float elevation, float detail, float river,
-                            float cNorm, float tNorm, float mNorm)
+                            float cNorm, float tNorm, float mNorm,
+                            float riverWidthMod)
         {
             Continental = continental;
             Elevation = elevation;
@@ -66,6 +74,7 @@ public class TerrainGenerator
             CNorm = cNorm;
             TNorm = tNorm;
             MNorm = mNorm;
+            RiverWidthMod = riverWidthMod;
         }
     }
 
@@ -124,14 +133,21 @@ public class TerrainGenerator
         _moistureNoise.FractalType = FastNoiseLite.FractalTypeEnum.Fbm;
         _moistureNoise.FractalOctaves = 2;
 
+        // Layer 7 — River width modulation: medium frequency for visible width variation along rivers
+        _riverWidthNoise = new FastNoiseLite();
+        _riverWidthNoise.Seed = seed + 1200;
+        _riverWidthNoise.NoiseType = FastNoiseLite.NoiseTypeEnum.SimplexSmooth;
+        _riverWidthNoise.Frequency = 0.018f;
+        _riverWidthNoise.FractalType = FastNoiseLite.FractalTypeEnum.None;
+
         // Cave generator: dual-threshold 3D noise for spaghetti caves
         _caveGenerator = new CaveGenerator(seed);
 
-        GD.Print($"TerrainGenerator initialized: seed={seed}, waterLevel={WaterLevel}, maxHeight={MaxHeight}, biomes=6, treeGrid={TreeGenerator.TreeGridSize}, caves=ON");
+        GD.Print($"TerrainGenerator initialized: seed={seed}, waterLevel={WaterLevel}, maxHeight={MaxHeight}, biomes=6, treeGrid={TreeGenerator.TreeGridSize}, caves=ON, riverWidth=variable");
     }
 
     /// <summary>
-    /// Sample all 6 noise layers at a world XZ position, normalize to [0,1].
+    /// Sample all 7 noise layers at a world XZ position, normalize to [0,1].
     /// </summary>
     private ColumnSample SampleColumn(int worldX, int worldZ)
     {
@@ -142,11 +158,16 @@ public class TerrainGenerator
         float temp = _temperatureNoise.GetNoise2D(worldX, worldZ);
         float moisture = _moistureNoise.GetNoise2D(worldX, worldZ);
 
+        // River width modulation: noise [-1,1] -> lerp between min and max multiplier
+        float widthRaw = _riverWidthNoise.GetNoise2D(worldX, worldZ);
+        float widthMod = Mathf.Lerp(RiverWidthMin, RiverWidthMax, (widthRaw + 1f) * 0.5f);
+
         return new ColumnSample(
             continental, elevation, detail, river,
             (continental + 1f) * 0.5f,
             (temp + 1f) * 0.5f,
-            (moisture + 1f) * 0.5f
+            (moisture + 1f) * 0.5f,
+            widthMod
         );
     }
 
@@ -234,20 +255,22 @@ public class TerrainGenerator
 
         // River carving: only where terrain is above water and not mountainous.
         // Channel depth is capped at RiverDepth blocks below surrounding terrain.
-        // Low elevations still reach water level; high elevations become shallow dry creeks.
+        // Width is modulated per-column for variable creek/river/lake widths.
         if (s.Continental <= 0.5f && rawHeight > WaterLevel + 1)
         {
+            float effectiveRiverWidth = RiverWidth * s.RiverWidthMod;
+            float effectiveBankWidth = RiverBankWidth * s.RiverWidthMod;
             float absRiver = Mathf.Abs(s.River);
-            if (absRiver < RiverWidth)
+            if (absRiver < effectiveRiverWidth)
             {
-                float channelFloor = Mathf.Max(WaterLevel - 1, rawHeight - RiverDepth);
+                float channelFloor = rawHeight - RiverDepth;
                 rawHeight = channelFloor;
             }
-            else if (absRiver < RiverBankWidth)
+            else if (absRiver < effectiveBankWidth)
             {
-                float channelFloor = Mathf.Max(WaterLevel - 1, rawHeight - RiverDepth);
-                float t = (absRiver - RiverWidth) / (RiverBankWidth - RiverWidth);
-                t = t * t;
+                float channelFloor = rawHeight - RiverDepth;
+                float t = (absRiver - effectiveRiverWidth) / (effectiveBankWidth - effectiveRiverWidth);
+                t = t * t * t;
                 rawHeight = Mathf.Lerp(channelFloor, rawHeight, t);
             }
         }
@@ -277,12 +300,14 @@ public class TerrainGenerator
     }
 
     /// <summary>
-    /// Returns true if this position is in a river channel.
+    /// Returns true if this position is in a river channel (core channel, not banks).
+    /// Uses modulated width for consistency with ComputeHeight().
     /// </summary>
     private bool IsRiverChannel(in ColumnSample s, int surfaceHeight)
     {
         if (s.Continental > 0.5f) return false;
-        if (Mathf.Abs(s.River) >= RiverWidth) return false;
+        float effectiveRiverWidth = RiverWidth * s.RiverWidthMod;
+        if (Mathf.Abs(s.River) >= effectiveRiverWidth) return false;
 
         // Check if terrain would naturally be above water (before river carving).
         // Recompute height without river carving.

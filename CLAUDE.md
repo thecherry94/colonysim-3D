@@ -164,23 +164,28 @@ This is an **in-memory cache only** — all data is lost when the game restarts.
 
 ### 3.7 Terrain Generation
 
-Multi-layer noise terrain using 5 `FastNoiseLite` layers:
+Multi-layer noise terrain using 7 `FastNoiseLite` layers:
 - **Continentalness** (freq 0.003): broad terrain category — lowlands, midlands, highlands
 - **Elevation** (freq 0.01): primary height variation, amplitude scaled by continentalness
 - **Detail** (freq 0.06): fine surface roughness, suppressed in flat areas
-- **River** (freq 0.005): rivers form where `abs(noise) ≈ 0`, only in non-mountainous terrain above water level. River depth is capped at `RiverDepth=6` blocks below surrounding terrain — low-elevation rivers reach water level (have water), high-elevation rivers become shallow dry creek valleys
-- **Temperature** (freq 0.004) and **Moisture** (freq 0.005): drive biome classification
+- **River** (freq 0.005): rivers form where `abs(noise) ≈ 0`, only in non-mountainous terrain above water level. River depth is capped at `RiverDepth=12` blocks below surrounding terrain
+- **Temperature** (freq 0.0008) and **Moisture** (freq 0.001): drive biome classification
+- **River Width** (freq 0.018): modulates river width per-column from 0.5× to 2.0× base width, creating narrow creek sections and wider river/pool sections
 
-Height range: 0-90 across multiple Y chunk layers (default 8 layers = 128 blocks tall). Water level: 25. Tall terrain (base 50-70, amplitude 5-20) creates 45-65 blocks of underground stone for deep cave networks. Snow caps on mountains at height >= 82.
+Height range: 0-90 across multiple Y chunk layers (default 8 layers = 128 blocks tall). Water level: 45. Tall terrain (base 50-70, amplitude 5-20) creates 45-65 blocks of underground stone for deep cave networks. Snow caps on mountains at height >= 82.
+
+**Variable-width rivers:** River width is modulated per-column by a separate noise layer. `RiverWidth` (0.04) and `RiverBankWidth` (0.16) are multiplied by `RiverWidthMod` (0.5–2.0), creating narrow creeks (half-width), normal rivers, and wider pools/rivers (double-width) along the same channel. The width noise (freq 0.018) changes roughly every ~55 blocks, so 2-3 width transitions are visible per stretch.
+
+**Minecraft-style water level:** All water (ocean and rivers) sits at the global `WaterLevel` (45). Rivers that carve below sea level naturally fill with water. Rivers above sea level become dry valleys — this is the same approach Minecraft uses and avoids water wall artifacts at boundaries. No per-section local water levels.
 
 **Biome system:** 6 biomes (Grassland, Forest, Desert, Tundra, Swamp, Mountains) selected by temperature, moisture, and continentalness. Each biome has distinct surface/subsurface blocks, height offsets, amplitude scales, and detail scales defined in `BiomeTable`. Biome boundaries use weighted blending of the 4 nearest biome heights (by Euclidean distance in temp/moisture space) to avoid hard terrain seams. See `Biome.cs` for definitions and `TerrainGenerator.cs` for blending logic.
 
 Block types by position:
-- Surface: determined by biome (`BiomeData.SurfaceBlock` — Grass, RedSand, Snow, Stone)
-- Subsurface (3 layers): determined by biome (`BiomeData.SubSurfaceBlock`)
+- Surface: determined by biome (`BiomeData.SurfaceBlock` — Grass, RedSand, Snow, Stone), with sand at water edges
+- Subsurface (3 layers): determined by biome (`BiomeData.SubSurfaceBlock`), sand at water edges
 - Underwater: determined by biome (`BiomeData.UnderwaterSurface`)
 - Deep: Stone everywhere
-- Water fills from height down to water level
+- Water fills from terrain up to global water level
 
 ### 3.8 Greedy Meshing
 
@@ -396,6 +401,7 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 22 | Performance: distance-based collision, increased pipeline throughput, reduced shadows | Done |
 | 23 | Performance: single-surface chunks (merge all opaque blocks, ~6x fewer draw calls) | Done |
 | 24 | Colonist spawn safety (deferred physics, cave-safe height, origin spawn) | Done |
+| 25 | Variable-width rivers (width modulation noise, Minecraft-style global water level) | Done |
 
 ### Future Phases (not yet planned in detail):
 - Multiple colonists
@@ -503,6 +509,10 @@ colonysim-3d/
 27. **Colonist physics must be frozen until chunks load.** `CharacterBody3D` gravity applies every `_PhysicsProcess` frame. At startup, zero chunks exist — the colonist falls through void in 1-2 frames. Use `_physicsReady` flag and enable only after `World.IsChunkReady()` confirms the spawn chunk has a mesh. Never assume collision exists at `_Ready()` time. See section 3.12.
 
 28. **`GetSurfaceHeight()` returns noise height, not actual surface.** Caves carved below terrain create air pockets the noise doesn't know about. After chunks load, use `World.GetBlock()` to scan downward and find the real highest solid block. Don't rely on noise height for colonist placement after cave generation was added.
+
+29. **River water follows Minecraft-style global water level.** All water sits at `WaterLevel` (45) — no per-section local water levels. Rivers that carve below sea level fill with water naturally; rivers above sea level are dry valleys. This avoids water wall artifacts at wet/dry boundaries. Per-section local water levels were tried and produced visible water walls where noise thresholds changed.
+
+30. **River width modulation is a separate noise from river path.** The width noise (freq 0.018) modulates the channel shape via `RiverWidthMod` (0.5–2.0×), stored in `ColumnSample` and used consistently in `ComputeHeight()` and `IsRiverChannel()`.
 
 ---
 
