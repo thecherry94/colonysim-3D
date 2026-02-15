@@ -29,7 +29,6 @@ public partial class CameraController : Node3D
 
     // Environment background swap for slice mode
     private Environment _environment;
-    private static readonly Color SkyColor = new(0.53f, 0.71f, 0.87f, 1f);
     private static readonly Color SliceColor = new(0.15f, 0.15f, 0.18f, 1f); // dark gray
 
     private const float MinPitch = -Mathf.Pi / 2.0f + 0.1f; // near top-down
@@ -189,9 +188,18 @@ public partial class CameraController : Node3D
         RenderingServer.GlobalShaderParameterSet("slice_y_level", (float)SliceState.YLevel);
 
         // Dark background when slicing so cave voids are visible as dark holes
+        // Switch between sky (normal) and solid color (slice mode)
         if (_environment != null)
         {
-            _environment.BackgroundColor = SliceState.Enabled ? SliceColor : SkyColor;
+            if (SliceState.Enabled)
+            {
+                _environment.BackgroundMode = Environment.BGMode.Color;
+                _environment.BackgroundColor = SliceColor;
+            }
+            else
+            {
+                _environment.BackgroundMode = Environment.BGMode.Sky;
+            }
         }
     }
 

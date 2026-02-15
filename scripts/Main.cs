@@ -35,6 +35,12 @@ public partial class Main : Node3D
     private bool _f4WasPressed;
     private bool _analyzerRunning;
 
+    // Dynamic lighting
+    private DirectionalLight3D _sunLight;
+    private ProceduralSkyMaterial _skyMaterial;
+    private Environment _environment;
+    private DayNightCycle _dayNightCycle;
+
     public override void _Ready()
     {
         GD.Print($"=== ColonySim Starting (distance={ChunkRenderDistance}, yLayers={ChunkYLayers}, seed={TerrainSeed}) ===");
@@ -88,11 +94,69 @@ public partial class Main : Node3D
             AddChild(blockInteraction);
             blockInteraction.Initialize(camera, _world, _colonist, ChunkRenderDistance);
 
-            // Increase shadow distance for taller terrain
-            var light = GetNodeOrNull<DirectionalLight3D>("DirectionalLight3D");
-            if (light != null)
-                light.DirectionalShadowMaxDistance = 120;
+            // Set up dynamic sun light and sky
+            SetupDynamicLighting();
         }
+    }
+
+    /// <summary>
+    /// Create the sun DirectionalLight3D, procedural sky, and environment settings.
+    /// Then hand off to DayNightCycle which animates everything over time.
+    /// </summary>
+    private void SetupDynamicLighting()
+    {
+        // --- Sun light ---
+        _sunLight = new DirectionalLight3D();
+        _sunLight.Name = "SunLight";
+        AddChild(_sunLight);
+
+        // Sun color and energy will be set by DayNightCycle each frame.
+        // Configure shadow properties here (these don't change with time of day).
+        _sunLight.ShadowEnabled = true;
+        _sunLight.ShadowBias = 0.1f;
+        _sunLight.ShadowNormalBias = 2.0f;
+        _sunLight.ShadowOpacity = 1.0f;
+        _sunLight.DirectionalShadowMaxDistance = 200f;
+        _sunLight.DirectionalShadowMode = DirectionalLight3D.ShadowMode.Parallel4Splits;
+        _sunLight.LightAngularDistance = 1.0f; // softer shadow edges
+
+        // --- Sky and Environment ---
+        var worldEnv = GetNodeOrNull<WorldEnvironment>("WorldEnvironment");
+        if (worldEnv != null)
+        {
+            _environment = worldEnv.Environment;
+
+            // Create a procedural sky — colors will be animated by DayNightCycle
+            _skyMaterial = new ProceduralSkyMaterial();
+            _skyMaterial.SunAngleMax = 30f;   // sun/moon disc visible size
+            _skyMaterial.SunCurve = 0.15f;    // sun glow falloff
+
+            var sky = new Sky();
+            sky.SkyMaterial = _skyMaterial;
+            sky.RadianceSize = Sky.RadianceSizeEnum.Size256;
+
+            _environment.Sky = sky;
+            _environment.BackgroundMode = Environment.BGMode.Sky;
+
+            // Ambient light source: custom color (not sky-derived, avoids blue tint).
+            // Color and energy will be animated by DayNightCycle.
+            _environment.AmbientLightSource = Environment.AmbientSource.Color;
+
+            // Reflected light from sky (only affects reflective surfaces like water)
+            _environment.ReflectedLightSource = Environment.ReflectionSource.Sky;
+
+            // Tone mapping for natural outdoor look
+            _environment.TonemapMode = Environment.ToneMapper.Filmic;
+            _environment.TonemapWhite = 6.0f;
+        }
+
+        // --- Day/Night Cycle ---
+        _dayNightCycle = new DayNightCycle();
+        _dayNightCycle.Name = "DayNightCycle";
+        AddChild(_dayNightCycle);
+        _dayNightCycle.Initialize(_sunLight, _skyMaterial, _environment);
+
+        GD.Print("Dynamic lighting: sun, moon, and day/night cycle initialized");
     }
 
     public override void _Process(double delta)

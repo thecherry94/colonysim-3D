@@ -46,7 +46,6 @@ public partial class FreeFlyCamera : Node3D
 
     // Environment background swap for slice mode
     private Environment _environment;
-    private static readonly Color SkyColor = new(0.53f, 0.71f, 0.87f, 1f);
     private static readonly Color SliceColor = new(0.15f, 0.15f, 0.18f, 1f);
 
     public Camera3D Camera => _camera;
@@ -269,6 +268,16 @@ public partial class FreeFlyCamera : Node3D
         RenderingServer.GlobalShaderParameterSet("slice_y_level", (float)SliceState.YLevel);
 
         if (_environment != null)
-            _environment.BackgroundColor = SliceState.Enabled ? SliceColor : SkyColor;
+        {
+            if (SliceState.Enabled)
+            {
+                _environment.BackgroundMode = Environment.BGMode.Color;
+                _environment.BackgroundColor = SliceColor;
+            }
+            else
+            {
+                _environment.BackgroundMode = Environment.BGMode.Sky;
+            }
+        }
     }
 }

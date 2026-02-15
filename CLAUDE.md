@@ -331,6 +331,25 @@ Evaluated options:
 
 Building from scratch gives full control over the C# implementation and keeps the codebase understandable. The core chunk rendering is only ~200-300 lines.
 
+### 3.17 Day/Night Cycle
+
+Full Minecraft-style day/night cycle with sun and moon. The system is a self-contained `DayNightCycle` Node created by `Main.SetupDynamicLighting()`.
+
+**Time convention:** Normalized 0.0-1.0 float. 0.0=midnight, 0.25=sunrise, 0.50=noon, 0.75=sunset. Default cycle: 20 real minutes (1200 seconds), configurable via `CycleDurationSeconds` export. Game starts at 0.30 (morning).
+
+**Architecture:**
+- `DayNightCycle.cs` — Node with `_Process`, owns the moon DirectionalLight3D, animates sun/moon/sky/ambient
+- `TimeState.cs` — Static global state (like `SliceState`): `TimeOfDay`, `IsNight`, `FormattedTime`
+- `Main.cs` creates sun, sky material, environment, then passes references to `DayNightCycle.Initialize()`
+
+**Keyframe interpolation:** 10 `TimeKeyframe` structs define sky colors, sun/moon color+energy, and ambient light at key moments (midnight, pre-dawn, dawn, morning, midday, afternoon, sunset, dusk, night, midnight-wrap). Each frame finds the surrounding pair and lerps all values. Zero allocations per frame.
+
+**Sun:** Full 360° arc, east-to-west. Max elevation 80° (not 90° — keeps shadows visible at noon). `Visible = false` when energy ≈ 0 to prevent glow artifacts below horizon. Shadow settings: 4 splits, max distance 200, full opacity.
+
+**Moon:** Second DirectionalLight3D, always 180° opposite the sun. Cool blue-white `(0.6, 0.7, 0.9)`, max energy 0.15 (dim). `SkyMode = LightAndSky` so ProceduralSkyMaterial renders a visible moon disk. Shadows enabled but faint (opacity 0.3). 2 splits, max distance 100. Max elevation 70°.
+
+**SliceState coordination:** Day/night always updates sky material colors and ambient light. Only sets `BackgroundMode = Sky` when `SliceState.Enabled == false`. Camera controllers own background mode during slicing.
+
 ---
 
 ## 4. Coordinate Systems
@@ -452,6 +471,7 @@ When the game runs, it loads the pre-baked collision shapes from the scene AND c
 | 26 | Geological layers (10 rock types, depth bands, province noise, boundary noise) | Done |
 | 27 | Tier 1 ore generation (Coal, Iron, Copper, Tin — noise clusters, host-rock restrictions) | Done |
 | 28 | Deep world (12 Y layers = 192 blocks, ~120 underground, scaled geology/caves/ores) | Done |
+| 29 | Dynamic lighting & day/night cycle (sun, moon, procedural sky, keyframe interpolation) | Done |
 
 ### Future Phases (not yet planned in detail):
 - Cave decoration (moss, glowing mushrooms, stalactites by depth — see WORLDGEN_PLAN.md Phase B)
@@ -482,6 +502,8 @@ colonysim-3d/
 │   └── chunk_water.gdshader              # Same + alpha blending (water blocks)
 ├── scripts/
 │   ├── Main.cs                           # Entry point, world setup, camera/colonist spawn
+│   ├── DayNightCycle.cs                  # Day/night cycle: sun/moon arc, sky colors, ambient
+│   ├── TimeState.cs                      # Global time-of-day state (static, like SliceState)
 │   ├── world/
 │   │   ├── World.cs                      # Chunk manager, streaming, chunk cache, collision radius
 │   │   ├── Chunk.cs                      # 16x16x16 block storage, mesh, distance-based collision
@@ -580,6 +602,14 @@ colonysim-3d/
 
 34. **All new rock and ore types are solid.** `BlockData.IsSolid()` returns true for all geological rocks and ores. Existing meshing, collision, pathfinding, and face culling handle them automatically with zero changes needed.
 
+35. **Day/night cycle does NOT require shader changes.** The chunk shaders use `shader_type spatial` which participates in Godot's standard lighting. DirectionalLight3D energy changes automatically affect all chunk meshes. No global shader uniforms needed for day/night — everything is driven through Godot object properties.
+
+36. **SliceState takes priority over day/night background mode.** When Y-level slicing is active, the camera controllers set `BackgroundMode = Color` (dark gray). The day/night cycle only sets `BackgroundMode = Sky` when `SliceState.Enabled == false`. Both systems agree on the non-slice state, so there is no conflict. The cycle always updates sky material colors and ambient light regardless of slice state.
+
+37. **Sun `Visible` must be toggled when energy reaches zero.** A DirectionalLight3D with energy 0 still causes ProceduralSkyMaterial to render a glow below the horizon. Setting `Visible = false` when `sunEnergy < 0.01` prevents this artifact. Same for the moon during daytime.
+
+38. **Moon uses `SkyMode = LightAndSky` for a visible disk.** ProceduralSkyMaterial automatically renders a disk for every DirectionalLight3D with this sky mode. The `SunAngleMax` property controls disk size for both sun and moon equally.
+
 ---
 
 ## 9. Runtime Controls
@@ -601,6 +631,9 @@ colonysim-3d/
 | Page Down | Lower Y-level slice (reveal underground) |
 | Page Up | Raise Y-level slice |
 | Home | Disable Y-level slice (show full world) |
+| T | Print current game time to console |
+| ] (hold) | Fast-forward time 20x (for testing day/night cycle) |
+| [ (hold) | Rewind time 20x |
 
 ---
 
