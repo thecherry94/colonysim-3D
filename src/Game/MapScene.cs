@@ -6,10 +6,11 @@ namespace ColonySim.Game;
 
 /// <summary>
 /// Root of the map scene: owns the map, the lighting, the renderers, the camera, the slice view, the designation
-/// tools with their overlay, instant work and the HUD.
+/// tools with their overlay, instant work, the HUD and the debug overlay.
 /// </summary>
 public partial class MapScene : Node3D
 {
+    public const string ScenePath = "res://scenes/map.tscn";
     public const string ShotsEnv = "COLONYSIM_SHOTS";
     public const string ShotsSizeEnv = "COLONYSIM_SHOTS_SIZE";
     const int ShotsSeed = 12345;
@@ -24,6 +25,7 @@ public partial class MapScene : Node3D
     public ToolController Tools { get; private set; } = null!;
     public InstantWorkRunner Work { get; private set; } = null!;
     public Hud Hud { get; private set; } = null!;
+    public DebugOverlay DebugOverlay { get; private set; } = null!;
 
     /// <summary>How long the fallback generation took, or null when the map came from <see cref="GameSession"/>.</summary>
     public double? GenerateMs { get; private set; }
@@ -33,6 +35,8 @@ public partial class MapScene : Node3D
         InputActions.Register();
         string shotsDir = OS.GetEnvironment(ShotsEnv);
         bool shots = !string.IsNullOrEmpty(shotsDir);
+        // The harness enters without a map; maps it later opens through the menu don't start it again.
+        bool startHarness = shots && GameSession.Map == null;
 
         // Fallback so the scene also runs on its own (F6) and in the screenshot harness.
         if (GameSession.Map == null)
@@ -101,7 +105,11 @@ public partial class MapScene : Node3D
         Hud.Setup(this);
         AddChild(Hud);
 
-        if (shots)
+        DebugOverlay = new DebugOverlay { Name = "DebugOverlay" };
+        DebugOverlay.Setup(this);
+        AddChild(DebugOverlay);
+
+        if (startHarness)
         {
             var visualShots = new VisualShots { Name = "VisualShots" };
             visualShots.Setup(this, shotsDir);

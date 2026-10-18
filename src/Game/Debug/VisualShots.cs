@@ -8,7 +8,7 @@ namespace ColonySim.Game;
 /// <summary>
 /// Screenshot harness, active when <c>COLONYSIM_SHOTS=&lt;dir&gt;</c> is set. Waits for the initial meshing,
 /// runs each named scenario, saves <c>&lt;dir&gt;/&lt;name&gt;.png</c>, writes <c>name=value</c> lines to
-/// <c>&lt;dir&gt;/metrics.txt</c> and quits.
+/// <c>&lt;dir&gt;/metrics.txt</c>, finishes with the menu checks (save, menu, load, generate) and quits.
 /// </summary>
 public partial class VisualShots : Node
 {
@@ -26,6 +26,8 @@ public partial class VisualShots : Node
     const int WorkTimeoutFrames = 3000;
 
     MapScene _scene = null!;
+    /// <summary>The harness outlives its map scene (menu checks), so it waits on the tree, not on itself.</summary>
+    SceneTree _tree = null!;
     string _dir = "";
     long _meshStart;
     (int X, int Y, int Z) _cave;
@@ -45,6 +47,9 @@ public partial class VisualShots : Node
         return
         [
             ("overview", () => Task.CompletedTask),
+            ("overview_full", MeasureOverviewFps),
+            (null, RecordGeneratedHash),
+            (null, CheckDebugOverlay),
             ("camera_rotated", () =>
             {
                 _scene.Rig.Yaw = 135;
@@ -92,6 +97,7 @@ public partial class VisualShots : Node
             }),
             ("designations", () => Designations(house)),
             ("built", () => Built(house)),
+            (null, CheckSaveRoundtrip),
             ("built_house", () => View(house.X + 4, house.Z + 3, _scene.Slice.TopLevel, 210, 35, 26)),
             ("built_house_slice", () => View(house.X + 4, house.Z + 3, house.H + 2, 210, 55, 26)),
             (null, MeasureEditLatency),
@@ -110,6 +116,7 @@ public partial class VisualShots : Node
 
     public override void _Ready()
     {
+        _tree = GetTree();
         var window = GetWindow();
         window.ContentScaleFactor = 1;
         window.Size = new Vector2I(1280, 720);
@@ -133,12 +140,13 @@ public partial class VisualShots : Node
                 await setup();
                 if (name != null) await Shoot(name);
             }
-            GetTree().Quit();
+            await CheckMenu();
+            _tree.Quit();
         }
         catch (Exception e)
         {
             GD.PushError($"VisualShots failed: {e}");
-            GetTree().Quit(1);
+            _tree.Quit(1);
         }
     }
 
@@ -637,8 +645,8 @@ public partial class VisualShots : Node
     {
         // Let the new view settle, then grab right after a frame has been drawn.
         await Frames(2);
-        await ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
-        var img = GetViewport().GetTexture().GetImage();
+        await _tree.ToSignal(RenderingServer.Singleton, RenderingServer.SignalName.FramePostDraw);
+        var img = _tree.Root.GetTexture().GetImage();
         string path = Path.Combine(_dir, name + ".png");
         var err = img.SavePng(path);
         if (err != Error.Ok) throw new IOException($"saving {path} failed ({err})");
@@ -650,5 +658,5 @@ public partial class VisualShots : Node
         for (int i = 0; i < count; i++) await NextFrame();
     }
 
-    public async Task NextFrame() => await ToSignal(GetTree(), SceneTree.SignalName.ProcessFrame);
+    public async Task NextFrame() => await _tree.ToSignal(_tree, SceneTree.SignalName.ProcessFrame);
 }

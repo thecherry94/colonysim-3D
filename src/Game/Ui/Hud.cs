@@ -4,22 +4,25 @@ using Godot;
 namespace ColonySim.Game;
 
 /// <summary>
-/// In-game HUD: the view-level indicator and the debug view toggles (top left), the tool status line (bottom
-/// center) and the toolbar (bottom): tools, build material, instant work and the queued job count.
-/// HUD buttons never take keyboard focus, so Tab, Esc and the number keys always reach the tools.
+/// In-game HUD: the view-level indicator, the debug view toggles, Save (also Ctrl+S) and Menu with their messages
+/// (top left), the tool status line (bottom center) and the toolbar (bottom): tools, build material, instant work
+/// and the queued job count. HUD buttons never take keyboard focus, so Tab, Esc and the number keys always reach
+/// the tools.
 /// </summary>
 public partial class Hud : CanvasLayer
 {
     static readonly Color PanelColor = new(20 / 255f, 24 / 255f, 32 / 255f, 0.93f);
     static readonly Color BorderColor = Color.FromHtml("#333a48");
-    static readonly Color TextColor = Color.FromHtml("#e6e6e6");
-    static readonly Color DimTextColor = Color.FromHtml("#9fb0d0");
+    internal static readonly Color TextColor = Color.FromHtml("#e6e6e6");
+    internal static readonly Color DimTextColor = Color.FromHtml("#9fb0d0");
     static readonly Color ButtonColor = Color.FromHtml("#2b3242");
     static readonly Color ButtonBorderColor = Color.FromHtml("#44506a");
     static readonly Color ButtonHoverColor = Color.FromHtml("#38425a");
-    static readonly Color ActiveColor = Color.FromHtml("#f3c64d");
-    static readonly Color ActiveTextColor = Color.FromHtml("#1b1f27");
+    internal static readonly Color ActiveColor = Color.FromHtml("#f3c64d");
+    internal static readonly Color ActiveTextColor = Color.FromHtml("#1b1f27");
+    internal static readonly Color ErrorColor = Color.FromHtml("#ff6b6b");
     static readonly Color WorkOnColor = Color.FromHtml("#27ae60");
+    const double MessageSeconds = 3, ErrorSeconds = 8;
 
     static readonly (DesignationTool? Tool, string Key)[] ToolButtons =
     [
@@ -28,7 +31,8 @@ public partial class Hud : CanvasLayer
     ];
 
     MapScene _scene = null!;
-    Label _level = null!, _status = null!, _jobs = null!;
+    Label _level = null!, _status = null!, _jobs = null!, _message = null!;
+    double _messageLeft;
     CheckBox _caps = null!, _fog = null!;
     readonly List<(Button Button, DesignationTool? Tool)> _tools = new();
     readonly List<(Button Button, BuildMaterial Material)> _materials = new();
@@ -36,6 +40,12 @@ public partial class Hud : CanvasLayer
     Button _work = null!;
 
     public void Setup(MapScene scene) => _scene = scene;
+
+    /// <summary>Returns to the new-game screen; exposed for the screenshot harness.</summary>
+    internal Button MenuButton { get; private set; } = null!;
+
+    /// <summary>The save/error message currently shown, or empty.</summary>
+    public string Message => _message.Visible ? _message.Text : "";
 
     public override void _Ready()
     {
@@ -66,6 +76,42 @@ public partial class Hud : CanvasLayer
         SetText(_work, _scene.Work.Enabled ? "⏸ Instant work" : "▶ Instant work");
         _caps.SetPressedNoSignal(_scene.Slice.CapsEnabled);
         _fog.SetPressedNoSignal(_scene.Slice.FogEnabled);
+
+        if (_message.Visible && (_messageLeft -= delta) <= 0) _message.Visible = false;
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (!@event.IsActionPressed(InputActions.Save)) return;
+        SaveGame();
+        GetViewport().SetInputAsHandled();
+    }
+
+    /// <summary>Saves the map and shows "Saved {file}", or the error in red.</summary>
+    void SaveGame()
+    {
+        try
+        {
+            ShowMessage($"Saved {SaveGames.Save(_scene.Map)}", error: false);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            ShowMessage($"Save failed: {e.Message}", error: true);
+        }
+    }
+
+    void ShowMessage(string text, bool error)
+    {
+        _message.Text = text;
+        _message.AddThemeColorOverride("font_color", error ? ErrorColor : TextColor);
+        _message.Visible = true;
+        _messageLeft = error ? ErrorSeconds : MessageSeconds;
+    }
+
+    void ReturnToMenu()
+    {
+        GameSession.Map = null;
+        GetTree().ChangeSceneToFile(NewGameScreen.ScenePath);
     }
 
     Control BuildTopLeft()
@@ -80,6 +126,15 @@ public partial class Hud : CanvasLayer
         _fog = Toggle("Fog of war", on => _scene.Slice.FogEnabled = on);
         box.AddChild(_caps);
         box.AddChild(_fog);
+        var buttons = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        buttons.AddThemeConstantOverride("separation", 6);
+        buttons.AddChild(ActionButton("Save [Ctrl+S]", SaveGame));
+        MenuButton = ActionButton("Menu", ReturnToMenu);
+        buttons.AddChild(MenuButton);
+        box.AddChild(buttons);
+        _message = Text("Message", 13, TextColor);
+        _message.Visible = false;
+        box.AddChild(_message);
         panel.AddChild(box);
         return panel;
     }
@@ -166,14 +221,14 @@ public partial class Hud : CanvasLayer
         if (button.Text != text) button.Text = text;
     }
 
-    static PanelContainer Panel(string name, int radius)
+    internal static PanelContainer Panel(string name, int radius)
     {
         var panel = new PanelContainer { Name = name };
         panel.AddThemeStyleboxOverride("panel", Box(PanelColor, BorderColor, radius, 14, 8));
         return panel;
     }
 
-    static Label Text(string name, int size, Color color)
+    internal static Label Text(string name, int size, Color color)
     {
         var label = new Label { Name = name, MouseFilter = Control.MouseFilterEnum.Ignore, VerticalAlignment = VerticalAlignment.Center };
         label.AddThemeFontSizeOverride("font_size", size);
@@ -190,6 +245,15 @@ public partial class Hud : CanvasLayer
         return box;
     }
 
+    static Button ActionButton(string text, Action onPressed)
+    {
+        var button = new Button { Text = text, FocusMode = Control.FocusModeEnum.None };
+        button.AddThemeFontSizeOverride("font_size", 13);
+        StyleButton(button, ActiveColor, ActiveTextColor);
+        button.Pressed += onPressed;
+        return button;
+    }
+
     static Button ToggleButton(string text, ButtonGroup? group)
     {
         var button = new Button { Text = text, ToggleMode = true, ButtonGroup = group, FocusMode = Control.FocusModeEnum.None };
@@ -199,7 +263,7 @@ public partial class Hud : CanvasLayer
     }
 
     /// <summary>Prototype styling: dark buttons, the pressed (active) state filled with <paramref name="active"/>.</summary>
-    static void StyleButton(Button button, Color active, Color activeText)
+    internal static void StyleButton(Button button, Color active, Color activeText)
     {
         button.AddThemeStyleboxOverride("normal", Box(ButtonColor, ButtonBorderColor, 6, 8, 4));
         button.AddThemeStyleboxOverride("hover", Box(ButtonHoverColor, ButtonBorderColor, 6, 8, 4));

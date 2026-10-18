@@ -22,6 +22,7 @@ public static class InputActions
     public const string ToolCancel = "tool_cancel";
     public const string MaterialCycle = "material_cycle";
     public const string Save = "save";
+    public const string DebugOverlay = "debug_overlay";
 
     public static void Register()
     {
@@ -42,6 +43,7 @@ public static class InputActions
         Add(ToolCancel, Key.Key5);
         Add(MaterialCycle, Key.Tab);
         Add(Save, Key.S, ctrl: true);
+        Add(DebugOverlay, Key.F3);
     }
 
     static void Add(string action, params Key[] keys) => Add(action, false, keys);
