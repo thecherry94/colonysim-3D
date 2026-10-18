@@ -6,6 +6,9 @@ shader_type spatial;
 // Caps are always rebuilt at the current cut, so they need no slice discard.
 uniform float darken = 0.68;
 
+// The prototype's cap color #14171d (sRGB 0.078, 0.090, 0.114) in linear space, since ALBEDO is linear.
+const vec3 CAP_COLOR = vec3(0.0070, 0.0086, 0.0123);
+
 // Caps lie exactly on the cut plane, where the chunk mesh may also draw the cut block's top face (when the
 // block above is stairs: solid but not occluding). Biasing the cap's depth slightly toward the camera makes it
 // win without z-fighting. It's a clip-space bias, so the cap doesn't move on screen and opens no gaps at its
@@ -19,7 +22,7 @@ void vertex() {
 
 void fragment() {
 	vec3 albedo = block_albedo(UV, UV2);
-	ALBEDO = mix(albedo, vec3(0.078, 0.090, 0.114), darken);
+	ALBEDO = mix(albedo, CAP_COLOR, darken);
 	ROUGHNESS = 1.0;
 	SPECULAR = 0.2;
 }

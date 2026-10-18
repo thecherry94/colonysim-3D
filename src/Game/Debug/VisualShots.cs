@@ -54,7 +54,10 @@ public partial class VisualShots : Node
             // Shadow-pass check: the mountain is cut down to near the surrounding ground, so its long shadow must vanish.
             ("shadow_unsliced", () => View(peakX, peakZ, _scene.Slice.TopLevel, shadowYaw, 50, 160)),
             ("shadow_sliced", () => View(peakX, peakZ, GroundNear(peakX, peakZ) + 2, shadowYaw, 50, 160)),
-            (null, MeasureLevelSteps),
+            // Deep uniform rock (few cap rectangles), then a sweep through the surface band, where terrain, trees
+            // and water break the caps into many rectangles.
+            (null, () => MeasureLevelSteps("level_step_ms", MidLevel + LevelSteps)),
+            (null, () => MeasureLevelSteps("level_step_surface_ms", world.GetSurfaceHeight(caveX, caveZ) + LevelSteps / 2)),
             (null, CheckLevelInput),
             // Z-fight check: stairs on the cut level keep the cut block's top face in the chunk mesh, coplanar with
             // its cap. The cap must win cleanly: a uniformly dark patch, no green speckle.
@@ -152,11 +155,13 @@ public partial class VisualShots : Node
         return Task.CompletedTask;
     }
 
-    /// <summary><c>level_step_ms_avg</c>/<c>_max</c>: single steps down from just above the mid level, caps on.</summary>
-    async Task MeasureLevelSteps()
+    /// <summary>
+    /// <c>{prefix}_avg</c>/<c>_max</c>: <see cref="LevelSteps"/> single steps down from <paramref name="top"/>, caps on.
+    /// </summary>
+    async Task MeasureLevelSteps(string prefix, int top)
     {
         var slice = _scene.Slice;
-        slice.SetLevel(MidLevel + LevelSteps);
+        slice.SetLevel(top);
         await NextFrame();
         double sum = 0, max = 0;
         for (int i = 0; i < LevelSteps; i++)
@@ -166,8 +171,8 @@ public partial class VisualShots : Node
             max = Math.Max(max, slice.LastLevelChangeMs);
             await NextFrame();
         }
-        Metric("level_step_ms_avg", sum / LevelSteps);
-        Metric("level_step_ms_max", max);
+        Metric(prefix + "_avg", sum / LevelSteps);
+        Metric(prefix + "_max", max);
     }
 
     /// <summary>
