@@ -102,6 +102,9 @@ public partial class VisualShots : Node
             ("built_house_slice", () => View(house.X + 4, house.Z + 3, house.H + 2, 210, 55, 26)),
             (null, MeasureEditLatency),
             (null, async () => await CheckTools(await LevelSite(FlatSite(ToolSiteW, ToolSiteD, house), ToolSiteW, ToolSiteD))),
+            // The tool site now has walls, so this picks a fresh one.
+            (null, async () => await CheckUnslicedTools(await LevelSite(FlatSite(ToolSiteW, ToolSiteD, house), ToolSiteW, ToolSiteD))),
+            (null, MeasureEditStream),
             ("cave_hidden", () => FindHiddenCave(house)),
             ("cave_revealed", RevealCave),
         ];
@@ -396,7 +399,7 @@ public partial class VisualShots : Node
         }
         _scene.Chunks.EditsApplied += OnApplied;
         var frames = new List<long>();
-        var ms = new List<string>();
+        var ms = new List<double>();
         for (int i = 0; i < 10; i++)
         {
             int x = (2 + i % 4) * VoxelWorld.ChunkSize, z = (2 + i / 4) * VoxelWorld.ChunkSize;
@@ -407,12 +410,13 @@ public partial class VisualShots : Node
             long edit = (long)Engine.GetProcessFrames();
             for (int f = 0; f < 30 && applied < 0; f++) await NextFrame();
             frames.Add(applied < 0 ? -1 : applied - edit);
-            ms.Add(appliedMs.ToString("0.0", CultureInfo.InvariantCulture));
+            ms.Add(appliedMs);
         }
         _scene.Chunks.EditsApplied -= OnApplied;
         Metric("edit_apply_frames", string.Join(' ', frames));
-        Metric("edit_apply_ms", string.Join(' ', ms));
+        Metric("edit_apply_ms", string.Join(' ', ms.Select(m => m.ToString("0.0", CultureInfo.InvariantCulture))));
         Metric("edit_apply_frames_max", frames.Max());
+        Metric("edit_apply_ms_max", ms.Max());
     }
 
     /// <summary>

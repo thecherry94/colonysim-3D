@@ -130,7 +130,8 @@ public partial class VisualShots
     /// <summary>
     /// The menu flows, driven like a player through the real HUD and new-game screen:
     /// <list type="bullet">
-    /// <item><c>menu_save</c>: queues a few dig jobs, presses Ctrl+S and reads the HUD message (shot <c>hud_saved</c>).</item>
+    /// <item><c>menu_leave_confirm</c>: queues a few dig jobs; Menu asks before leaving (see <see cref="CheckLeaveDialog"/>).</item>
+    /// <item><c>menu_save</c>: presses Ctrl+S and reads the HUD message (shot <c>hud_saved</c>); nothing is unsaved after.</item>
     /// <item><c>menu_load_error</c>: Menu, then Load on a corrupt save: the red error, and the screen still usable
     /// (shot <c>menu_load_error</c>).</item>
     /// <item><c>menu_roundtrip_equal</c>: Load on the save just made: the map comes back exactly as saved (shot
@@ -147,6 +148,7 @@ public partial class VisualShots
         Designator.Apply(map, DesignationTool.Dig, BuildMaterial.Wood, new DragBox(new(site.X, site.H, site.Z), new(site.X + 3, site.H - 2, site.Z + 3)));
         await View(site.X + 2, site.Z + 2, _scene.Slice.TopLevel, 30, 50, 40);
         var before = await Task.Run(() => Fingerprint.Of(map));
+        await CheckLeaveDialog();
 
         Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = Godot.Key.S, Keycode = Godot.Key.S, CtrlPressed = true, Pressed = true });
         Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = Godot.Key.S, Keycode = Godot.Key.S, CtrlPressed = true, Pressed = false });
@@ -155,7 +157,8 @@ public partial class VisualShots
         const string savedPrefix = "Saved ";
         if (!message.StartsWith(savedPrefix)) throw new InvalidOperationException($"Ctrl+S did not save: '{message}'");
         string saveFile = message[savedPrefix.Length..];
-        Metric("menu_save", $"message:[{message}] jobs:{map.Jobs.Count} listed_first:{SaveGames.List().FirstOrDefault() == saveFile}");
+        Metric("menu_save", $"message:[{message}] jobs:{map.Jobs.Count} listed_first:{SaveGames.List().FirstOrDefault() == saveFile} " +
+            $"unsaved_after:{_scene.Hud.HasUnsavedChanges}");
         await Shoot("hud_saved");
 
         string corruptPath = Path.Combine(ProjectSettings.GlobalizePath(SaveGames.Dir), CorruptSave);
