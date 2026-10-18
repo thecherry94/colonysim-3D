@@ -36,4 +36,19 @@ public class DesignatorTests
         var m = new ColonyMap(MapSettings.Create(1, MapSize.Large), TestWorlds.SolidBelow(512));
         Assert.Equal(Designator.MaxCellsPerDrag, P(m, DesignationTool.Dig, B(0, 150, 0, 511, 100, 511)).Count);
     }
+
+    [Fact] public void Wall_PastMapEdge_UsesUnclippedOutline()
+    {
+        // Outline edges at x=-3 and z=10/13 are partly off-map: only z rows 10 and 13 (x 0..4) and the x=4 column survive.
+        var j = P(TestWorlds.FlatMap(), DesignationTool.Wall, B(-3, 151, 10, 4, 151, 13));
+        Assert.Equal(12, j.Count);
+        Assert.DoesNotContain(j, x => x.Position.X == 0 && x.Position.Z is not (10 or 13));
+    }
+    [Fact] public void Cancel_OverHugeBox_ReturnsOnlyQueuedJobs()
+    {
+        var m = new ColonyMap(MapSettings.Create(1, MapSize.Large), TestWorlds.SolidBelow(512));
+        foreach (var p in new[] { new Int3(5, 100, 5), new Int3(300, 50, 400), new Int3(511, 255, 511) })
+            m.Jobs.Add(new Job(p, JobKind.Dig, Blocks.Air));
+        Assert.Equal(3, P(m, DesignationTool.Cancel, B(0, 0, 0, 511, 255, 511)).Count);
+    }
 }
