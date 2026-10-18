@@ -14,12 +14,14 @@ public partial class MapScene : Node3D
 
     public ColonyMap Map { get; private set; } = null!;
     public ChunkRenderer Chunks { get; private set; } = null!;
+    public CameraRig Rig { get; private set; } = null!;
 
     /// <summary>How long the fallback generation took, or null when the map came from <see cref="GameSession"/>.</summary>
     public double? GenerateMs { get; private set; }
 
     public override void _Ready()
     {
+        InputActions.Register();
         string shotsDir = OS.GetEnvironment(ShotsEnv);
         bool shots = !string.IsNullOrEmpty(shotsDir);
 
@@ -61,7 +63,9 @@ public partial class MapScene : Node3D
         AddChild(Chunks);
         Chunks.Initialize(Map);
 
-        AddOverviewCamera();
+        Rig = new CameraRig { Name = "CameraRig" };
+        AddChild(Rig);
+        Rig.Setup(Map);
 
         if (shots)
         {
@@ -69,16 +73,6 @@ public partial class MapScene : Node3D
             visualShots.Setup(this, shotsDir);
             AddChild(visualShots);
         }
-    }
-
-    /// <summary>Temporary fixed camera looking at the map center; replaced by the camera rig.</summary>
-    void AddOverviewCamera()
-    {
-        var w = Map.World;
-        var camera = new Camera3D { Name = "Camera", Far = 2000, Current = true };
-        AddChild(camera);
-        var center = new Vector3(w.SizeX / 2f, w.GetSurfaceHeight(w.SizeX / 2, w.SizeZ / 2), w.SizeZ / 2f);
-        camera.LookAtFromPosition(new Vector3(0.3f * w.SizeX, 220, 1.3f * w.SizeZ), center, Vector3.Up);
     }
 
     static MapSize ParseSize(string value) =>

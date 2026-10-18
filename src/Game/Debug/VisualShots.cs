@@ -22,6 +22,13 @@ public partial class VisualShots : Node
     List<(string Name, Func<Task> Setup)> Scenarios() =>
     [
         ("overview", () => Task.CompletedTask),
+        ("camera_rotated", () =>
+        {
+            _scene.Rig.Yaw = 135;
+            _scene.Rig.Pitch = 35;
+            _scene.Rig.Distance = 80;
+            return Task.CompletedTask;
+        }),
     ];
 
     public void Setup(MapScene scene, string dir)
