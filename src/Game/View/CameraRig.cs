@@ -76,7 +76,8 @@ public partial class CameraRig : Node3D
     static bool ModifierHeld() =>
         Input.IsKeyPressed(Key.Ctrl) || Input.IsKeyPressed(Key.Alt) || Input.IsKeyPressed(Key.Meta);
 
-    float SurfaceAtFocus() =>
+    /// <summary>The generated surface height of the column under the focus point.</summary>
+    public int SurfaceAtFocus() =>
         _map.World.GetSurfaceHeight(
             Math.Clamp((int)_focusX, 0, _map.World.SizeX - 1),
             Math.Clamp((int)_focusZ, 0, _map.World.SizeZ - 1));

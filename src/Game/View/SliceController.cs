@@ -7,7 +7,9 @@ namespace ColonySim.Game;
 /// <summary>
 /// Owns the view level. Everything above it is hidden: the block shaders discard above the global
 /// <c>slice_height</c>, chunks entirely above it are hidden, and solid blocks the cut passes through get caps.
-/// PgUp/PgDn and Shift+wheel step one level, Home returns to the top (nothing hidden).
+/// PgUp/PgDn and Shift+wheel step one level (the first step down from the top lands on the ground at the camera
+/// focus), Home returns to the top (nothing hidden). While a tool drag is in progress the tool controller takes these
+/// inputs first (see <see cref="ToolController"/>).
 /// </summary>
 public partial class SliceController : Node
 {
@@ -31,8 +33,6 @@ public partial class SliceController : Node
 
     /// <summary>Time the last <see cref="SetLevel"/> took, including the cap mesh upload.</summary>
     public float LastLevelChangeMs { get; private set; }
-
-    public event Action<int>? LevelChanged;
 
     /// <summary>Dark caps on (default) or off. Off still closes the cut, with the blocks' raw top texture.</summary>
     public bool CapsEnabled
@@ -83,33 +83,36 @@ public partial class SliceController : Node
         _camera.FocusOnLevel(ViewLevel, sliced);
 
         LastLevelChangeMs = (float)Stopwatch.GetElapsedTime(start).TotalMilliseconds;
-        LevelChanged?.Invoke(ViewLevel);
     }
 
+    /// <summary>One level up (+1) or down (-1); see <see cref="ToolTargeting.StepLevel"/>.</summary>
     void Step(int delta)
     {
-        int target = Math.Clamp(ViewLevel + delta, MinLevel, TopLevel);
+        int target = ToolTargeting.StepLevel(ViewLevel, delta, TopLevel, _camera.SurfaceAtFocus());
         if (target != ViewLevel) SetLevel(target);
     }
 
-    public override void _UnhandledInput(InputEvent @event)
+    /// <summary>+1 or -1 if <paramref name="e"/> is a level step (PgUp/PgDn, Shift+wheel), else 0.</summary>
+    public static int StepDelta(InputEvent e)
     {
-        if (_map == null) return;
-        if (@event.IsActionPressed(InputActions.LevelUp, allowEcho: true)) Step(+1);
-        else if (@event.IsActionPressed(InputActions.LevelDown, allowEcho: true)) Step(-1);
-        else if (@event.IsActionPressed(InputActions.LevelTop)) { if (IsSliced) SetLevel(TopLevel); }
-        else if (@event is InputEventMouseButton { Pressed: true, ShiftPressed: true } wheel)
-        {
-            // Some platforms turn Shift+wheel into horizontal scrolling, so left/right count as up/down.
-            int delta = wheel.ButtonIndex switch
+        if (e.IsActionPressed(InputActions.LevelUp, allowEcho: true)) return +1;
+        if (e.IsActionPressed(InputActions.LevelDown, allowEcho: true)) return -1;
+        // Some platforms turn Shift+wheel into horizontal scrolling, so left/right count as up/down.
+        if (e is InputEventMouseButton { Pressed: true, ShiftPressed: true } wheel)
+            return wheel.ButtonIndex switch
             {
                 MouseButton.WheelUp or MouseButton.WheelLeft => +1,
                 MouseButton.WheelDown or MouseButton.WheelRight => -1,
                 _ => 0,
             };
-            if (delta == 0) return;
-            Step(delta);
-        }
+        return 0;
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (_map == null) return;
+        if (StepDelta(@event) is var delta and not 0) Step(delta);
+        else if (@event.IsActionPressed(InputActions.LevelTop)) { if (IsSliced) SetLevel(TopLevel); }
         else return;
         GetViewport().SetInputAsHandled();
     }

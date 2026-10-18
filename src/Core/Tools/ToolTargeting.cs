@@ -30,6 +30,17 @@ public static class ToolTargeting
     public static int JumpLevel(RaycastHit hit, int topLevel) =>
         Math.Clamp(hit.Normal.Y > 0 ? hit.Block.Y + 1 : hit.Block.Y, 1, topLevel);
 
-    public static DragBox ExtendBox(DragBox box, int levelAtStart, int currentLevel) =>
-        box with { End = box.End with { Y = Math.Clamp(box.Start.Y + (currentLevel - levelAtStart), 1, WorldTop) } };
+    /// <summary>
+    /// The level one step (<paramref name="delta"/> = ±1) from <paramref name="viewLevel"/>. The first step down from
+    /// the unsliced top lands on the level you'd stand on at the camera focus (<paramref name="focusSurface"/> + 1),
+    /// not one block under the sky; every other step moves one level. Clamped to [1, <paramref name="topLevel"/>].
+    /// </summary>
+    public static int StepLevel(int viewLevel, int delta, int topLevel, int focusSurface) =>
+        viewLevel >= topLevel && delta < 0
+            ? Math.Clamp(focusSurface + 1, 1, topLevel - 1)
+            : Math.Clamp(viewLevel + delta, 1, topLevel);
+
+    /// <summary>Moves the box's far level by <paramref name="delta"/> (a level step mid-drag), clamped to [1, 255].</summary>
+    public static DragBox ExtendBox(DragBox box, int delta) =>
+        box with { End = box.End with { Y = Math.Clamp(box.End.Y + delta, 1, WorldTop) } };
 }

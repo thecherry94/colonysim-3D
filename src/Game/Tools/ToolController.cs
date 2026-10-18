@@ -6,8 +6,10 @@ namespace ColonySim.Game;
 
 /// <summary>
 /// The designation tools. Left-drag draws a box at the current view level (see <see cref="ToolTargeting"/>);
-/// changing the level mid-drag stretches it into a 3D box; release applies it, Esc cancels. With the Camera tool,
-/// a double-click jumps the view to the clicked block's level. Right and middle buttons stay with the camera.
+/// a level step mid-drag (PgUp/PgDn, Shift+wheel) stretches it into a 3D box one level per step from the level the
+/// drag started on; release applies it, Esc cancels. A drag started in a slice takes the view level along with the
+/// box; a drag started unsliced leaves the view at the top. Home is ignored mid-drag. With the Camera tool, a
+/// double-click jumps the view to the clicked block's level. Right and middle buttons stay with the camera.
 /// </summary>
 public partial class ToolController : Node3D
 {
@@ -28,7 +30,7 @@ public partial class ToolController : Node3D
 
     bool _dragging;
     DragBox _box;
-    int _levelAtStart;
+    bool _viewFollowsDrag;
     float _planeY;
     int _previewJobsVersion;
 
@@ -77,7 +79,6 @@ public partial class ToolController : Node3D
     {
         _scene = scene;
         _map = scene.Map;
-        scene.Slice.LevelChanged += OnLevelChanged;
         Status = ToolHint(null);
     }
 
@@ -98,12 +99,10 @@ public partial class ToolController : Node3D
         AddChild(_hover);
     }
 
-    public override void _ExitTree()
-    {
-        if (_scene?.Slice != null) _scene.Slice.LevelChanged -= OnLevelChanged;
-    }
-
-    /// <summary>Sees mouse moves and the drag's release before the HUD, so a drag also follows the cursor over panels.</summary>
+    /// <summary>
+    /// Sees mouse moves and the drag's release before the HUD, so a drag also follows the cursor over panels; takes
+    /// the level controls mid-drag before the slice controller.
+    /// </summary>
     public override void _Input(InputEvent @event)
     {
         if (_map == null) return;
@@ -119,7 +118,27 @@ public partial class ToolController : Node3D
                 Finish();
                 GetViewport().SetInputAsHandled();
                 break;
+            default:
+                if (_dragging && HandleDragLevelInput(@event)) GetViewport().SetInputAsHandled();
+                break;
         }
+    }
+
+    /// <summary>Mid-drag, level steps extend the box and Home does nothing; returns whether it took the event.</summary>
+    bool HandleDragLevelInput(InputEvent e)
+    {
+        int delta = SliceController.StepDelta(e);
+        if (delta != 0)
+        {
+            var box = ToolTargeting.ExtendBox(_box, delta);
+            if (box.End.Y == _box.End.Y) return true;
+            _box = box;
+            // In a slice the box's far level is the view level, so the view keeps showing it.
+            if (_viewFollowsDrag) _scene.Slice.SetLevel(_box.End.Y);
+            RefreshPreview();
+            return true;
+        }
+        return e.IsActionPressed(InputActions.LevelTop);
     }
 
     public override void _UnhandledInput(InputEvent @event)
@@ -198,7 +217,7 @@ public partial class ToolController : Node3D
         var slice = _scene.Slice;
         var start = ToolTargeting.Target(tool, hit, slice.ViewLevel, slice.TopLevel);
         _box = new DragBox(start, start);
-        _levelAtStart = slice.ViewLevel;
+        _viewFollowsDrag = slice.IsSliced;
         _planeY = ToolTargeting.DragPlaneHeight(tool, start.Y);
         _dragging = true;
         RefreshPreview();
@@ -217,13 +236,6 @@ public partial class ToolController : Node3D
         z = Math.Clamp(z, -1, _map.World.SizeZ);
         if (x == _box.End.X && z == _box.End.Z) return;
         _box = _box with { End = new Int3(x, _box.End.Y, z) };
-        RefreshPreview();
-    }
-
-    void OnLevelChanged(int level)
-    {
-        if (!_dragging) return;
-        _box = ToolTargeting.ExtendBox(_box, _levelAtStart, level);
         RefreshPreview();
     }
 
