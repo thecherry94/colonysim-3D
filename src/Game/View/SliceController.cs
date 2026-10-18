@@ -41,6 +41,19 @@ public partial class SliceController : Node
         set { _capsEnabled = value; _caps.Dark = value; }
     }
 
+    /// <summary>Fog of war on (default) or off: remeshes every chunk and re-slices, since what is visible changes everywhere.</summary>
+    public bool FogEnabled
+    {
+        get => _map.View.FogEnabled;
+        set
+        {
+            if (_map.View.FogEnabled == value) return;
+            _map.View.FogEnabled = value;
+            _map.World.MarkAllDirty();
+            SetLevel(ViewLevel);
+        }
+    }
+
     public void Setup(ColonyMap map, ChunkRenderer chunks, CapRenderer caps, CameraRig camera)
     {
         _map = map;
@@ -48,12 +61,12 @@ public partial class SliceController : Node
         _caps = caps;
         _camera = camera;
         _caps.Dark = _capsEnabled;
-        _chunks.ChunksDirtied += OnChunksDirtied;
+        _chunks.EditsApplied += OnEditsApplied;
     }
 
     public override void _ExitTree()
     {
-        if (_chunks != null) _chunks.ChunksDirtied -= OnChunksDirtied;
+        if (_chunks != null) _chunks.EditsApplied -= OnEditsApplied;
     }
 
     /// <summary>Sets the view level (clamped to [1, <see cref="TopLevel"/>]) and re-slices, even if unchanged.</summary>
@@ -101,8 +114,11 @@ public partial class SliceController : Node
         GetViewport().SetInputAsHandled();
     }
 
-    /// <summary>An edit near the cut changes the caps of its column: rebuild those columns right away.</summary>
-    void OnChunksDirtied(IReadOnlyCollection<Int3> chunks)
+    /// <summary>
+    /// An edit near the cut changes the caps of its column: rebuild those columns in the frame the edited chunks
+    /// show their new meshes, so caps and chunk meshes never disagree.
+    /// </summary>
+    void OnEditsApplied(IReadOnlyCollection<Int3> chunks)
     {
         if (!IsSliced) return;
         int cut = ViewLevel;

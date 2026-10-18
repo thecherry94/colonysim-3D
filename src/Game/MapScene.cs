@@ -4,7 +4,10 @@ using Godot;
 
 namespace ColonySim.Game;
 
-/// <summary>Root of the map scene: owns the map, the lighting, the renderers, the camera, the slice view and the HUD.</summary>
+/// <summary>
+/// Root of the map scene: owns the map, the lighting, the renderers, the camera, the slice view, the designation
+/// tools with their overlay, instant work and the HUD.
+/// </summary>
 public partial class MapScene : Node3D
 {
     public const string ShotsEnv = "COLONYSIM_SHOTS";
@@ -17,6 +20,9 @@ public partial class MapScene : Node3D
     public CameraRig Rig { get; private set; } = null!;
     public CapRenderer Caps { get; private set; } = null!;
     public SliceController Slice { get; private set; } = null!;
+    public DesignationOverlay Overlay { get; private set; } = null!;
+    public ToolController Tools { get; private set; } = null!;
+    public InstantWorkRunner Work { get; private set; } = null!;
     public Hud Hud { get; private set; } = null!;
 
     /// <summary>How long the fallback generation took, or null when the map came from <see cref="GameSession"/>.</summary>
@@ -78,6 +84,18 @@ public partial class MapScene : Node3D
         AddChild(Slice);
         Slice.Setup(Map, Chunks, Caps, Rig);
         Slice.SetLevel(Slice.TopLevel);
+
+        Overlay = new DesignationOverlay { Name = "Overlay" };
+        AddChild(Overlay);
+        Overlay.Setup(Map);
+
+        Tools = new ToolController { Name = "Tools" };
+        AddChild(Tools);
+        Tools.Setup(this);
+
+        Work = new InstantWorkRunner { Name = "InstantWork" };
+        AddChild(Work);
+        Work.Setup(Map);
 
         Hud = new Hud { Name = "Hud" };
         Hud.Setup(this);

@@ -19,9 +19,16 @@ public partial class VisualShots : Node
     const int LevelSteps = 20;
     const int CaveBand = 8;
 
+    // Designations site: the 9×7 room at its origin, the 8×8 pit 12 blocks east of it.
+    const int HouseSiteW = 20, HouseSiteD = 8, PitOffsetX = 12;
+    // Tool check site: drags over a 5×4 rectangle starting 2 blocks in.
+    const int ToolSiteW = 9, ToolSiteD = 8;
+    const int WorkTimeoutFrames = 3000;
+
     MapScene _scene = null!;
     string _dir = "";
     long _meshStart;
+    (int X, int Y, int Z) _cave;
 
     /// <summary>
     /// Scenarios in run order: each sets up the view; the harness then shoots it. A null name runs the
@@ -32,6 +39,7 @@ public partial class VisualShots : Node
         var world = _scene.Map.World;
         var (caveX, caveZ) = CaveFocus();
         var (peakX, peakZ) = HighestColumn();
+        var house = FlatSite(HouseSiteW, HouseSiteD, null);
         // The sun shines toward +X/-Z; looking from that side shows the shadows cast toward the camera.
         const float shadowYaw = 145;
         return
@@ -73,11 +81,23 @@ public partial class VisualShots : Node
             }),
             ("slice_fog_off", async () =>
             {
-                _scene.Map.View.FogEnabled = false;
-                world.MarkAllDirty();
+                _scene.Slice.FogEnabled = false;
                 await WaitForRemesh();
                 await View(caveX, caveZ, MidLevel, 0, 60, 70);
             }),
+            (null, async () =>
+            {
+                _scene.Slice.FogEnabled = true;
+                await WaitForRemesh();
+            }),
+            ("designations", () => Designations(house)),
+            ("built", () => Built(house)),
+            ("built_house", () => View(house.X + 4, house.Z + 3, _scene.Slice.TopLevel, 210, 35, 26)),
+            ("built_house_slice", () => View(house.X + 4, house.Z + 3, house.H + 2, 210, 55, 26)),
+            (null, MeasureEditLatency),
+            (null, async () => await CheckTools(await LevelSite(FlatSite(ToolSiteW, ToolSiteD, house), ToolSiteW, ToolSiteD))),
+            ("cave_hidden", () => FindHiddenCave(house)),
+            ("cave_revealed", RevealCave),
         ];
     }
 
@@ -255,6 +275,342 @@ public partial class VisualShots : Node
                 if (w.InBounds(x + dx, 0, z + dz)) heights.Add(w.GetSurfaceHeight(x + dx, z + dz));
         heights.Sort();
         return heights[heights.Count / 4];
+    }
+
+    /// <summary>A map area for the tool scenarios: <c>H</c> is its highest ground; <c>Range</c> its height spread.</summary>
+    readonly record struct Site(int X, int Z, int H, int Range);
+
+    /// <summary>
+    /// The flattest <paramref name="w"/>×<paramref name="d"/> area (plus a 1-block margin) with only air for 12 blocks
+    /// above the ground (no trees, no water), nearest the map center and well away from <paramref name="avoid"/>.
+    /// </summary>
+    Site FlatSite(int w, int d, Site? avoid)
+    {
+        var world = _scene.Map.World;
+        const int margin = 40, clearance = 12;
+        Site best = default;
+        long bestScore = long.MaxValue;
+        for (int z = margin; z + d + margin <= world.SizeZ; z += 4)
+            for (int x = margin; x + w + margin <= world.SizeX; x += 4)
+            {
+                if (avoid is { } a && Math.Abs(x - a.X) < 48 && Math.Abs(z - a.Z) < 48) continue;
+                int lo = int.MaxValue, hi = int.MinValue;
+                bool clear = true;
+                for (int dz = -1; dz <= d && clear; dz++)
+                    for (int dx = -1; dx <= w && clear; dx++)
+                    {
+                        int h = world.GetSurfaceHeight(x + dx, z + dz);
+                        lo = Math.Min(lo, h);
+                        hi = Math.Max(hi, h);
+                        for (int y = h + 1; y <= h + clearance && clear; y++)
+                            clear = world.GetBlock(x + dx, y, z + dz) == Blocks.Air;
+                    }
+                if (!clear) continue;
+                long cx = x + w / 2 - world.SizeX / 2, cz = z + d / 2 - world.SizeZ / 2;
+                long score = (long)(hi - lo) * 1_000_000 + cx * cx + cz * cz;
+                if (score < bestScore) { bestScore = score; best = new Site(x, z, hi, hi - lo); }
+            }
+        if (bestScore == long.MaxValue) throw new InvalidOperationException("no clear site for the tool scenarios");
+        return best;
+    }
+
+    /// <summary>
+    /// Flattens the site (plus a 2-block margin) down to its lowest ground, so synthetic clicks aimed at the top face
+    /// of a cell can't land on a neighboring higher block. Removed blocks are open to the sky, so they are discovered.
+    /// </summary>
+    async Task<Site> LevelSite(Site s, int w, int d)
+    {
+        var world = _scene.Map.World;
+        int lo = int.MaxValue;
+        for (int z = s.Z - 2; z <= s.Z + d + 1; z++)
+            for (int x = s.X - 2; x <= s.X + w + 1; x++)
+                lo = Math.Min(lo, world.GetSurfaceHeight(x, z));
+        for (int z = s.Z - 2; z <= s.Z + d + 1; z++)
+            for (int x = s.X - 2; x <= s.X + w + 1; x++)
+            {
+                int h = world.GetSurfaceHeight(x, z);
+                if (h == lo) continue;
+                for (int y = lo + 1; y <= h; y++)
+                {
+                    world.SetBlock(x, y, z, Blocks.Air);
+                    world.SetDiscovered(x, y, z);
+                }
+                world.SetBlock(x, lo, z, Blocks.Grass);
+                world.SetSurfaceHeight(x, z, lo);
+            }
+        await WaitForRemesh();
+        return s with { H = lo, Range = 0 };
+    }
+
+    /// <summary>
+    /// <c>designations</c>: a 9×7 Wall box over 3 levels, a Floor on top of it, a 6-long Stairs inside (climbing
+    /// east through the floor) and an 8×8 Dig box 12 levels deep next to it.
+    /// </summary>
+    async Task Designations(Site s)
+    {
+        var map = _scene.Map;
+        int h = s.H, x0 = s.X, z0 = s.Z, px = s.X + PitOffsetX;
+        Designator.Apply(map, DesignationTool.Wall, BuildMaterial.Stone, new DragBox(new(x0, h + 1, z0), new(x0 + 8, h + 3, z0 + 6)));
+        Designator.Apply(map, DesignationTool.Floor, BuildMaterial.Wood, new DragBox(new(x0, h + 4, z0), new(x0 + 8, h + 4, z0 + 6)));
+        Designator.Apply(map, DesignationTool.Stairs, BuildMaterial.Wood, new DragBox(new(x0 + 1, h + 1, z0 + 3), new(x0 + 6, h + 1, z0 + 3)));
+        Designator.Apply(map, DesignationTool.Dig, BuildMaterial.Wood, new DragBox(new(px, h, z0), new(px + 7, h - 11, z0 + 7)));
+        var kinds = map.Jobs.All.GroupBy(j => j.Kind).OrderBy(g => g.Key).Select(g => $"{g.Key}:{g.Count()}");
+        Metric("designations", $"site:({s.X},{s.Z}) ground:{h} range:{s.Range} jobs:{map.Jobs.Count} {string.Join(' ', kinds)}");
+        await View(x0 + 10, z0 + 4, _scene.Slice.TopLevel, 200, 50, 30);
+    }
+
+    /// <summary><c>built</c>: completes every job with instant work, then slices one level above the pit's lowest dug cell.</summary>
+    async Task Built(Site s)
+    {
+        var map = _scene.Map;
+        int ticks = 0;
+        while (map.Jobs.Count > 0) { InstantWorker.Step(map, 500); ticks++; }
+        await WaitForRemesh();
+        int px = s.X + PitOffsetX, bottom = s.H - 11;
+        Metric("built", $"steps:{ticks} pit_bottom_air:{map.World.GetBlock(px + 3, bottom, s.Z + 3) == Blocks.Air}");
+        await View(px + 4, s.Z + 4, bottom + 1, 200, 60, 36);
+    }
+
+    /// <summary>
+    /// <c>edit_apply_frames_*</c>: frames from a single-block edit at a chunk corner (several chunks dirtied) to the
+    /// frame its whole batch of new chunk meshes is applied.
+    /// </summary>
+    async Task MeasureEditLatency()
+    {
+        var world = _scene.Map.World;
+        long applied = -1;
+        double appliedMs = 0;
+        long editStart = 0;
+        void OnApplied(IReadOnlyCollection<Int3> _)
+        {
+            applied = (long)Engine.GetProcessFrames();
+            appliedMs = Stopwatch.GetElapsedTime(editStart).TotalMilliseconds;
+        }
+        _scene.Chunks.EditsApplied += OnApplied;
+        var frames = new List<long>();
+        var ms = new List<string>();
+        for (int i = 0; i < 10; i++)
+        {
+            int x = (2 + i % 4) * VoxelWorld.ChunkSize, z = (2 + i / 4) * VoxelWorld.ChunkSize;
+            int y = world.GetSurfaceHeight(x, z);
+            applied = -1;
+            editStart = Stopwatch.GetTimestamp();
+            world.SetBlock(x, y, z, Blocks.Air);
+            long edit = (long)Engine.GetProcessFrames();
+            for (int f = 0; f < 30 && applied < 0; f++) await NextFrame();
+            frames.Add(applied < 0 ? -1 : applied - edit);
+            ms.Add(appliedMs.ToString("0.0", CultureInfo.InvariantCulture));
+        }
+        _scene.Chunks.EditsApplied -= OnApplied;
+        Metric("edit_apply_frames", string.Join(' ', frames));
+        Metric("edit_apply_ms", string.Join(' ', ms));
+        Metric("edit_apply_frames_max", frames.Max());
+    }
+
+    /// <summary>
+    /// <c>tool_check</c>: drives the tools through the real input pipeline (synthetic mouse and key events at the
+    /// screen positions of chosen cells) and records what each step produced. Shoots <c>drag_preview</c> and
+    /// <c>drag_preview_slice</c> mid-drag.
+    /// </summary>
+    async Task CheckTools(Site s)
+    {
+        var tools = _scene.Tools;
+        var slice = _scene.Slice;
+        var map = _scene.Map;
+        var results = new List<string>();
+        int h = s.H, ax = s.X + 2, az = s.Z + 2, bx = ax + 4, bz = az + 3; // a 5×4 rectangle
+        Vector3 Top(int x, int y, int z) => new(x + 0.5f, y + 1, z + 0.5f);
+        bool InRect(Int3 p) => p.X >= ax && p.X <= bx && p.Z >= az && p.Z <= bz;
+        int Count(Func<Job, bool> match) => map.Jobs.All.Count(match);
+        Metric("tool_site", $"({s.X},{s.Z}) ground:{h} range:{s.Range}");
+
+        await View(ax + 2, az + 2, slice.TopLevel, 0, 60, 36);
+        await Frames(30);
+
+        // Hover: shows the mouse mapping is right (the wire box sits on the cell under the synthetic cursor).
+        await Key(Godot.Key.Key1);
+        results.Add($"tool_key:{ToolController.ToolName(tools.ActiveTool)}");
+        await Move(Top(ax, h, az));
+        var hover = tools.GetNode<Node3D>("Hover");
+        results.Add($"hover:{(hover.Visible && hover.Position == new Vector3(ax + 0.5f, h + 0.5f, az + 0.5f) ? "ok" : $"bad@{hover.Position}")}");
+
+        // Dig drag at the top level, with a mid-drag screenshot.
+        int before = map.Jobs.Count;
+        await Press(Top(ax, h, az));
+        await Move(Top(bx, h, bz), held: true);
+        Metric("drag_status", tools.Status);
+        await Shoot("drag_preview");
+        await Release(Top(bx, h, bz));
+        int dug = Count(j => j.Kind == JobKind.Dig && j.Position.Y == h && InRect(j.Position));
+        results.Add($"top_drag:{map.Jobs.Count - before}/20(at_ground:{dug})");
+
+        // Cancel over the same rectangle.
+        await Key(Godot.Key.Key5);
+        await Press(Top(ax, h, az));
+        await Move(Top(bx, h, bz), held: true);
+        await Release(Top(bx, h, bz));
+        results.Add($"cancel:{map.Jobs.Count - before}_left");
+
+        // Esc cancels a drag, then a second Esc returns to the Camera tool.
+        await Key(Godot.Key.Key1);
+        await Press(Top(ax, h, az));
+        await Move(Top(bx, h, bz), held: true);
+        await Key(Godot.Key.Escape);
+        results.Add($"esc_drag:{(!tools.IsDragging ? "cancelled" : "still_dragging")}");
+        await Release(Top(bx, h, bz));
+        results.Add($"esc_jobs:{map.Jobs.Count - before}");
+        await Key(Godot.Key.Escape);
+        results.Add($"esc_tool:{ToolController.ToolName(tools.ActiveTool)}");
+
+        // Double-click with the Camera tool jumps to the level you'd stand on.
+        await Press(Top(ax, h, az), doubleClick: true);
+        await Release(Top(ax, h, az));
+        results.Add($"double_click:{slice.ViewLevel}/{h + 1}");
+        await Frames(60); // the camera eases to the new level
+
+        // Wall drag in that slice, made 3 levels tall with PgUp mid-drag; Tab switches to stone first.
+        await Key(Godot.Key.Key2);
+        await Key(Godot.Key.Tab);
+        results.Add($"tab:{tools.Material}");
+        before = map.Jobs.Count;
+        await Press(Top(ax, h, az));
+        await Move(Top(bx, h, bz), held: true);
+        await Key(Godot.Key.Pageup);
+        await Key(Godot.Key.Pageup);
+        results.Add($"wall_status:[{tools.Status}]");
+        await Release(Top(bx, h, bz));
+        int walls = Count(j => j.Kind == JobKind.BuildWall && j.Position.Y >= h + 1 && j.Position.Y <= h + 3 && InRect(j.Position));
+        results.Add($"slice_wall_pgup:{map.Jobs.Count - before}/42(in_box:{walls})");
+
+        // Dig drag in an underground slice, deepened by 3 levels with PgDn mid-drag.
+        int cut = h - 2;
+        await View(ax + 2, az + 2, cut, 0, 60, 36);
+        await Frames(30);
+        await Key(Godot.Key.Key1);
+        before = map.Jobs.Count;
+        await Press(Top(ax, cut, az));
+        await Move(Top(bx, cut, bz), held: true);
+        for (int i = 0; i < 3; i++) await Key(Godot.Key.Pagedown);
+        results.Add($"dig_status:[{tools.Status}]");
+        await Shoot("drag_preview_slice");
+        await Release(Top(bx, cut, bz));
+        int digs = Count(j => j.Kind == JobKind.Dig && j.Position.Y >= cut - 3 && j.Position.Y <= cut && InRect(j.Position));
+        results.Add($"slice_dig_pgdn:{map.Jobs.Count - before}/80(in_box:{digs})");
+
+        // Instant work (the HUD's runner at 25×) completes both.
+        int frames = await RunInstantWork();
+        int air = 0, stone = 0;
+        for (int z = az; z <= bz; z++)
+            for (int x = ax; x <= bx; x++)
+            {
+                for (int y = cut - 3; y <= cut; y++) if (map.World.GetBlock(x, y, z) == Blocks.Air) air++;
+                for (int y = h + 1; y <= h + 3; y++) if (map.World.GetBlock(x, y, z) == Blocks.BuildBlock(BuildMaterial.Stone)) stone++;
+            }
+        results.Add($"instant_work:jobs_left:{map.Jobs.Count} frames:{frames} dug_air:{air}/80 stone_walls:{stone}/42");
+        Metric("tool_check", string.Join(' ', results));
+        await Key(Godot.Key.Escape); // back to the Camera tool: no hover box in later shots
+    }
+
+    /// <summary>Turns on the instant-work runner at 25× until the queue is empty; returns the frames it took.</summary>
+    async Task<int> RunInstantWork()
+    {
+        var work = _scene.Work;
+        work.SpeedMultiplier = 25;
+        work.Enabled = true;
+        int frames = 0;
+        while (_scene.Map.Jobs.Count > 0 && frames < WorkTimeoutFrames) { await NextFrame(); frames++; }
+        work.Enabled = false;
+        await WaitForRemesh();
+        return frames;
+    }
+
+    /// <summary>
+    /// <c>cave_hidden</c>: the undiscovered cave cell closest to the surface (away from the edge and the house site),
+    /// in a cave of at least 20 hidden cells nearby, sliced at its level with fog on: it must look like solid rock.
+    /// </summary>
+    Task FindHiddenCave(Site avoid)
+    {
+        var w = _scene.Map.World;
+        const int margin = 40;
+        int bestDepth = int.MaxValue;
+        for (int z = margin; z < w.SizeZ - margin; z++)
+            for (int x = margin; x < w.SizeX - margin; x++)
+            {
+                if (Math.Abs(x - avoid.X) < 48 && Math.Abs(z - avoid.Z) < 48) continue;
+                int h = w.GetSurfaceHeight(x, z);
+                for (int y = h - 3; y > h - 3 - Math.Min(bestDepth, 60); y--)
+                {
+                    if (Blocks.Registry.Get(w.GetBlock(x, y, z)).IsSolid || w.IsDiscovered(x, y, z)) continue;
+                    if (HiddenAround(x, y, z) >= 20 && h - y < bestDepth) { bestDepth = h - y; _cave = (x, y, z); }
+                    break;
+                }
+            }
+        if (bestDepth == int.MaxValue) throw new InvalidOperationException("no hidden cave found");
+        Metric("cave", $"({_cave.X},{_cave.Y},{_cave.Z}) depth:{bestDepth} hidden_nearby:{HiddenAround(_cave.X, _cave.Y, _cave.Z)}");
+        return View(_cave.X, _cave.Z, _cave.Y, 0, 60, 30);
+    }
+
+    int HiddenAround(int cx, int cy, int cz)
+    {
+        var w = _scene.Map.World;
+        int n = 0;
+        for (int y = cy - 2; y <= cy + 2; y++)
+            for (int z = cz - 4; z <= cz + 4; z++)
+                for (int x = cx - 4; x <= cx + 4; x++)
+                    if (w.InBounds(x, y, z) && !Blocks.Registry.Get(w.GetBlock(x, y, z)).IsSolid && !w.IsDiscovered(x, y, z)) n++;
+        return n;
+    }
+
+    /// <summary><c>cave_revealed</c>: a 1×1 shaft from the surface into the cave, completed by instant work, same view.</summary>
+    async Task RevealCave()
+    {
+        var map = _scene.Map;
+        var (x, y, z) = _cave;
+        int surface = map.World.GetSurfaceHeight(x, z);
+        bool before = map.World.IsDiscovered(x, y, z);
+        int hiddenBefore = HiddenAround(x, y, z);
+        Designator.Apply(map, DesignationTool.Dig, BuildMaterial.Wood, new DragBox(new(x, surface, z), new(x, y + 1, z)));
+        int frames = await RunInstantWork();
+        Metric("cave_reveal", $"discovered_before:{before} after:{map.World.IsDiscovered(x, y, z)} " +
+            $"visible_after:{(map.View.GetVisibleBlock(x, y, z) == Blocks.Air ? "air" : "rock")} " +
+            $"hidden_nearby_before:{hiddenBefore} after:{HiddenAround(x, y, z)} frames:{frames}");
+        await View(x, z, y, 0, 60, 30);
+    }
+
+    Vector2 ScreenOf(Vector3 world) =>
+        GetViewport().GetFinalTransform() * _scene.Rig.Camera.UnprojectPosition(world);
+
+    async Task Send(InputEvent e)
+    {
+        Input.ParseInputEvent(e);
+        await Frames(2);
+    }
+
+    Task Move(Vector3 world, bool held = false)
+    {
+        var p = ScreenOf(world);
+        return Send(new InputEventMouseMotion { Position = p, GlobalPosition = p, ButtonMask = held ? MouseButtonMask.Left : 0 });
+    }
+
+    Task Press(Vector3 world, bool doubleClick = false) => MouseButtonEvent(world, true, doubleClick);
+
+    Task Release(Vector3 world) => MouseButtonEvent(world, false, false);
+
+    Task MouseButtonEvent(Vector3 world, bool pressed, bool doubleClick)
+    {
+        var p = ScreenOf(world);
+        return Send(new InputEventMouseButton
+        {
+            ButtonIndex = MouseButton.Left, Pressed = pressed, DoubleClick = doubleClick,
+            ButtonMask = pressed ? MouseButtonMask.Left : 0, Position = p, GlobalPosition = p,
+        });
+    }
+
+    async Task Key(Key key)
+    {
+        Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = true });
+        Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = key, Keycode = key, Pressed = false });
+        await Frames(2);
     }
 
     (int X, int Z) HighestColumn()
