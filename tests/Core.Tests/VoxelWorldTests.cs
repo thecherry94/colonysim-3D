@@ -30,4 +30,14 @@ public class VoxelWorldTests
         Assert.True(w.IsChunkUniform(new Int3(0, 0, 0), out var id)); Assert.Equal(Blocks.Air, id);
         w.SetBlock(0, 0, 0, Blocks.Stone); Assert.False(w.IsChunkUniform(new Int3(0, 0, 0), out _));
     }
+
+    [Fact] public void EditVersion_CountsTrackedWritesOnly()
+    {
+        var w = new VoxelWorld(64, 64);
+        w.SetBlock(1, 1, 1, Blocks.Stone, markDirty: false); w.SetDiscovered(1, 2, 1, markDirty: false); w.MarkAllDirty();
+        Assert.Equal(0, w.EditVersion);
+        w.SetBlock(1, 1, 1, Blocks.Dirt); Assert.Equal(1, w.EditVersion);
+        w.SetDiscovered(1, 3, 1); Assert.Equal(2, w.EditVersion);
+        w.SetBlock(-1, 1, 1, Blocks.Dirt); Assert.Equal(2, w.EditVersion);
+    }
 }

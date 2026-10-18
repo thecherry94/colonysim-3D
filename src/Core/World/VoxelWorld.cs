@@ -1,6 +1,17 @@
 namespace ColonySim.Core;
 
-/// <summary>Chunked voxel storage with discovery bits, surface heights and dirty-chunk tracking.</summary>
+/// <summary>
+/// Chunked voxel storage with discovery bits, surface heights and dirty-chunk tracking.
+/// <para>
+/// Threading contract: mutating the world (<see cref="SetBlock"/>, <see cref="SetDiscovered"/>,
+/// <see cref="SetSurfaceHeight"/>), <see cref="ConsumeDirtyChunks"/> and <see cref="MarkAllDirty"/> belong to the
+/// main thread. Reads (<see cref="GetBlock"/>, <see cref="IsDiscovered"/>, <see cref="GetSurfaceHeight"/>,
+/// <see cref="IsChunkUniform"/>) are safe from any thread concurrently with each other and with main-thread writes
+/// (a reader racing a write may see either value; the renderer re-meshes the dirtied chunk afterwards). The one
+/// exception is bulk building, e.g. generation: writes with <c>markDirty: false</c> to <em>distinct chunks</em> may run
+/// in parallel, since chunks share no mutable state and the dirty set is not touched.
+/// </para>
+/// </summary>
 public sealed class VoxelWorld
 {
     public const int ChunkSize = 32;
@@ -16,6 +27,12 @@ public sealed class VoxelWorld
     public int ChunksX { get; }
     public int ChunksY => Height / ChunkSize;
     public int ChunksZ { get; }
+
+    /// <summary>
+    /// Increments on every tracked change (a block or discovery write with <c>markDirty</c>): the main-thread edits a
+    /// save would need to keep. Untracked bulk writes and <see cref="MarkAllDirty"/> leave it alone.
+    /// </summary>
+    public int EditVersion { get; private set; }
 
     public VoxelWorld(int sizeX, int sizeZ)
     {
@@ -70,8 +87,13 @@ public sealed class VoxelWorld
     /// <summary>Chunk by chunk coordinates, for bulk persistence (bypasses dirty tracking).</summary>
     internal Chunk ChunkByCoords(int cx, int cy, int cz) => _chunks[ChunkIndex(cx, cy, cz)];
 
+    /// <summary>
+    /// The <em>generated</em> surface height of column (x, z): the top of the terrain as generated (the fog material
+    /// and the terrain layers are keyed to it). It is not the current top block: digging or building doesn't change it.
+    /// </summary>
     public int GetSurfaceHeight(int x, int z) => _surface[z * SizeX + x];
 
+    /// <summary>Sets the generated surface height (generation, loading); see <see cref="GetSurfaceHeight"/>.</summary>
     public void SetSurfaceHeight(int x, int z, int y) => _surface[z * SizeX + x] = y;
 
     public bool IsChunkUniform(Int3 chunk, out ushort id)
@@ -81,12 +103,14 @@ public sealed class VoxelWorld
         return c.IsUniform;
     }
 
+    /// <summary>Moves the chunks dirtied since the last call into <paramref name="into"/>. Main thread only.</summary>
     public void ConsumeDirtyChunks(ICollection<Int3> into)
     {
         foreach (var c in _dirty) into.Add(c);
         _dirty.Clear();
     }
 
+    /// <summary>Marks every chunk dirty (e.g. after the fog toggle changes what is visible everywhere). Main thread only.</summary>
     public void MarkAllDirty()
     {
         for (int cy = 0; cy < ChunksY; cy++)
@@ -98,6 +122,7 @@ public sealed class VoxelWorld
     // Ambient occlusion reads diagonals, so every chunk touching the 3x3x3 neighborhood is dirtied.
     void MarkDirtyAround(int x, int y, int z)
     {
+        EditVersion++;
         int x0 = Math.Max(x - 1, 0) >> 5, x1 = Math.Min(x + 1, SizeX - 1) >> 5;
         int y0 = Math.Max(y - 1, 0) >> 5, y1 = Math.Min(y + 1, Height - 1) >> 5;
         int z0 = Math.Max(z - 1, 0) >> 5, z1 = Math.Min(z + 1, SizeZ - 1) >> 5;

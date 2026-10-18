@@ -6,7 +6,7 @@ namespace ColonySim.Game;
 /// <summary>
 /// In-game HUD: the view-level indicator, the debug view toggles, Save (also Ctrl+S) and Menu with their messages
 /// (top left), the tool status line (bottom center) and the toolbar (bottom): tools, build material, instant work
-/// and the queued job count. HUD buttons never take keyboard focus, so Tab, Esc and the number keys always reach
+/// and the queued job count. Menu asks first when blocks or jobs changed since the map was saved, loaded or generated. HUD buttons never take keyboard focus, so Tab, Esc and the number keys always reach
 /// the tools.
 /// </summary>
 public partial class Hud : CanvasLayer
@@ -23,6 +23,7 @@ public partial class Hud : CanvasLayer
     internal static readonly Color ErrorColor = Color.FromHtml("#ff6b6b");
     static readonly Color WorkOnColor = Color.FromHtml("#27ae60");
     const double MessageSeconds = 3, ErrorSeconds = 8;
+    const string SaveAndLeaveAction = "save_and_leave";
 
     static readonly (DesignationTool? Tool, string Key)[] ToolButtons =
     [
@@ -38,11 +39,18 @@ public partial class Hud : CanvasLayer
     readonly List<(Button Button, BuildMaterial Material)> _materials = new();
     readonly List<(Button Button, int Speed)> _speeds = new();
     Button _work = null!;
+    (int World, int Jobs) _savedVersion;
 
     public void Setup(MapScene scene) => _scene = scene;
 
     /// <summary>Returns to the new-game screen; exposed for the screenshot harness.</summary>
     internal Button MenuButton { get; private set; } = null!;
+
+    /// <summary>"Leave without saving?", shown by Menu when there are unsaved changes; exposed for the harness.</summary>
+    internal ConfirmationDialog LeaveDialog { get; private set; } = null!;
+
+    /// <summary>Blocks, discovery or jobs changed since the map was saved, loaded or generated.</summary>
+    public bool HasUnsavedChanges => CurrentVersion() != _savedVersion;
 
     /// <summary>The save/error message currently shown, or empty.</summary>
     public string Message => _message.Visible ? _message.Text : "";
@@ -51,6 +59,9 @@ public partial class Hud : CanvasLayer
     {
         AddChild(BuildTopLeft());
         AddChild(BuildBottom());
+        AddChild(BuildLeaveDialog());
+        // The scene starts on a freshly generated or loaded map: nothing to save yet.
+        _savedVersion = CurrentVersion();
         _scene.Tools.StatusChanged += OnStatusChanged;
         OnStatusChanged();
     }
@@ -64,7 +75,7 @@ public partial class Hud : CanvasLayer
     {
         if (_scene == null) return;
         // Depth is relative to the ground under the camera focus, which changes as the camera pans.
-        SetText(_level, LevelText(_scene.Slice, SurfaceAtFocus()));
+        SetText(_level, LevelText(_scene.Slice, _scene.Rig.SurfaceAtFocus()));
         int count = _scene.Map.Jobs.Count;
         SetText(_jobs, count == 0 ? "no jobs queued" : count == 1 ? "1 job queued" : $"{count} jobs queued");
 
@@ -87,17 +98,49 @@ public partial class Hud : CanvasLayer
         GetViewport().SetInputAsHandled();
     }
 
-    /// <summary>Saves the map and shows "Saved {file}", or the error in red.</summary>
-    void SaveGame()
+    /// <summary>Saves the map and shows "Saved {file}", or the error in red; returns whether it saved.</summary>
+    bool SaveGame()
     {
         try
         {
+            var version = CurrentVersion();
             ShowMessage($"Saved {SaveGames.Save(_scene.Map)}", error: false);
+            _savedVersion = version;
+            return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             ShowMessage($"Save failed: {e.Message}", error: true);
+            return false;
         }
+    }
+
+    (int, int) CurrentVersion() => (_scene.Map.World.EditVersion, _scene.Map.Jobs.Version);
+
+    void OnMenuPressed()
+    {
+        if (HasUnsavedChanges) LeaveDialog.PopupCentered();
+        else ReturnToMenu();
+    }
+
+    ConfirmationDialog BuildLeaveDialog()
+    {
+        LeaveDialog = new ConfirmationDialog
+        {
+            Name = "LeaveDialog",
+            Title = "Unsaved changes",
+            DialogText = "Leave without saving?",
+            OkButtonText = "Leave",
+        };
+        LeaveDialog.AddButton("Save & leave", right: false, action: SaveAndLeaveAction);
+        LeaveDialog.Confirmed += ReturnToMenu;
+        LeaveDialog.CustomAction += action =>
+        {
+            if (action != SaveAndLeaveAction) return;
+            LeaveDialog.Hide();
+            if (SaveGame()) ReturnToMenu();
+        };
+        return LeaveDialog;
     }
 
     void ShowMessage(string text, bool error)
@@ -128,8 +171,8 @@ public partial class Hud : CanvasLayer
         box.AddChild(_fog);
         var buttons = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         buttons.AddThemeConstantOverride("separation", 6);
-        buttons.AddChild(ActionButton("Save [Ctrl+S]", SaveGame));
-        MenuButton = ActionButton("Menu", ReturnToMenu);
+        buttons.AddChild(ActionButton("Save [Ctrl+S]", () => SaveGame()));
+        MenuButton = ActionButton("Menu", OnMenuPressed);
         buttons.AddChild(MenuButton);
         box.AddChild(buttons);
         _message = Text("Message", 13, TextColor);
@@ -290,14 +333,5 @@ public partial class Hud : CanvasLayer
         int rel = slice.ViewLevel - surface;
         string depth = rel < 0 ? $"{-rel} below ground" : rel == 0 ? "ground level" : $"{rel} above ground";
         return $"View level: Y {slice.ViewLevel} · {depth}";
-    }
-
-    int SurfaceAtFocus()
-    {
-        var world = _scene.Map.World;
-        var focus = _scene.Rig.FocusPoint;
-        return world.GetSurfaceHeight(
-            Math.Clamp((int)focus.X, 0, world.SizeX - 1),
-            Math.Clamp((int)focus.Z, 0, world.SizeZ - 1));
     }
 }

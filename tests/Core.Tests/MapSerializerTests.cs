@@ -69,4 +69,27 @@ public class MapSerializerTests
         BitConverter.GetBytes(MapSerializer.FormatVersion + 1).CopyTo(bytes, 4);
         Assert.Contains("version", Assert.Throws<InvalidDataException>(() => MapSerializer.Load(new MemoryStream(bytes))).Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Theory]
+    [InlineData(-1, 140, 5)]
+    [InlineData(64, 140, 5)]
+    [InlineData(5, 140, -1)]
+    [InlineData(5, 140, 64)]
+    [InlineData(5, 0, 5)]
+    [InlineData(5, 256, 5)]
+    public void Load_JobOutsideMap_ThrowsInvalidData(int x, int y, int z)
+    {
+        var m = TestWorlds.FlatMap();
+        m.Jobs.Add(new Job(new Int3(x, y, z), JobKind.Dig, Blocks.Air));
+        var ms = new MemoryStream(); MapSerializer.Save(m, ms); ms.Position = 0;
+        Assert.Contains("job", Assert.Throws<InvalidDataException>(() => MapSerializer.Load(ms)).Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact] public void Load_JobsAtMapLimits_AreKept()
+    {
+        var m = TestWorlds.FlatMap();
+        m.Jobs.Add(new Job(new Int3(0, 1, 0), JobKind.Dig, Blocks.Air));
+        m.Jobs.Add(new Job(new Int3(63, 255, 63), JobKind.BuildWall, Blocks.StoneBricks));
+        Assert.Equal(2, RoundTrip(m).Jobs.Count);
+    }
 }
