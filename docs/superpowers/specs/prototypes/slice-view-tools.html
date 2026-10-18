@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Slice view + tools prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1f27; color: #e6e6e6; font-family: system-ui, sans-serif; overflow: hidden; }
+  #panel { position: absolute; top: 12px; left: 12px; width: 340px; max-height: calc(100% - 24px); overflow-y: auto; box-sizing: border-box; background: rgba(20,24,32,.93); border: 1px solid #333a48; border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.45; }
+  #panel h2 { margin: 0 0 4px; font-size: 16px; }
+  #panel h3 { margin: 12px 0 4px; font-size: 13px; color: #9fb0d0; text-transform: uppercase; letter-spacing: .04em; }
+  #panel .tag { display: inline-block; font-size: 11px; background: #3a2f12; color: #f3c64d; border-radius: 4px; padding: 1px 6px; margin-bottom: 6px; }
+  #panel p { margin: 4px 0; color: #b9bfcc; }
+  #level { font-size: 15px; font-weight: 600; margin: 4px 0; }
+  input[type=range] { width: 100%; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+  button { background: #2b3242; color: #e6e6e6; border: 1px solid #44506a; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
+  button:hover { background: #38425a; }
+  button.active { background: #f3c64d; color: #1b1f27; border-color: #f3c64d; font-weight: 600; }
+  button.work.on { background: #27ae60; border-color: #27ae60; }
+  label { display: block; margin: 3px 0; cursor: pointer; }
+  ul { margin: 4px 0; padding-left: 18px; color: #b9bfcc; }
+  li { margin: 2px 0; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  kbd { background: #2b3242; border: 1px solid #44506a; border-radius: 3px; padding: 0 4px; font-size: 11px; }
+  #status { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(20,24,32,.9); border: 1px solid #333a48; border-radius: 8px; padding: 6px 12px; font-size: 13px; pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="panel">
+  <h2>Slice view + designation tools</h2>
+  <div class="tag">throwaway prototype</div>
+
+  <div id="level">View level: top</div>
+  <input id="cut" type="range" min="1" max="63" value="63">
+
+  <h3>Tools</h3>
+  <div class="row">
+    <button data-tool="none" class="active">Camera <kbd>Esc</kbd></button>
+    <button data-tool="dig">Dig <kbd>D</kbd></button>
+    <button data-tool="wall">Wall <kbd>W</kbd></button>
+    <button data-tool="floor">Floor <kbd>F</kbd></button>
+    <button data-tool="cancel">Cancel <kbd>X</kbd></button>
+  </div>
+  <div class="row">
+    <button id="work" class="work">▶ Colonists work</button>
+    <span id="count" style="align-self:center;color:#9fb0d0"></span>
+  </div>
+
+  <h3>Controls</h3>
+  <ul>
+    <li><b>Change level:</b> <kbd>PgUp</kbd>/<kbd>PgDn</kbd>, <kbd>Shift</kbd>+wheel, or the slider</li>
+    <li><b>Jump to a spot:</b> double-click a block (Camera tool)</li>
+    <li><b>Use a tool:</b> left-drag a rectangle. It acts on the <i>current view level</i>. At the top level it acts on whatever surface you click.</li>
+    <li><b>Make it 3D:</b> while still holding the mouse, press <kbd>PgDn</kbd> (dig deeper) or <kbd>PgUp</kbd> (build walls taller), then release</li>
+    <li><b>Walls</b> go on the outline of the rectangle, so one drag makes a room. <b>Floors</b> fill it.</li>
+    <li><b>Camera with a tool active:</b> right-drag orbits, middle-drag pans, wheel zooms</li>
+  </ul>
+
+  <h3>View</h3>
+  <label><input id="caps" type="checkbox" checked> Draw cut blocks dark</label>
+  <label><input id="fog" type="checkbox" checked> Fog of war (undiscovered caves look like rock)</label>
+  <div class="row">
+    <span style="align-self:center;color:#9fb0d0">Demo shortcuts:</span>
+    <button data-preset="top">Surface</button>
+    <button data-preset="floor1">House</button>
+    <button data-preset="mine">Mine</button>
+  </div>
+  <p><span class="sw" style="background:#f08a3c"></span>colonist
+     <span class="sw" style="background:#ffd23f;margin-left:8px"></span>dig
+     <span class="sw" style="background:#4aa3ff;margin-left:8px"></span>wall
+     <span class="sw" style="background:#3fe0c5;margin-left:8px"></span>floor</p>
+  <p style="font-size:12px">"Colonists work" just pops the marked blocks one by one. There's no real AI here. It only shows how the marked jobs turn into world changes.</p>
+</div>
+<div id="status">Pick a tool, then drag on the map.</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const SX = 72, SZ = 72, SY = 64, WATER_LEVEL = 30;
+const AIR=0, GRASS=1, DIRT=2, STONE=3, DEEP=4, BEDROCK=5, COAL=6, IRON=7, GOLD=8, WATER=9,
+      WOOD=10, LEAVES=11, PLANK=12, FLOOR=13, ROOF=14, BED=15, SAND=16;
+const COLOR = {
+  [GRASS]:0x5fa83a, [DIRT]:0x8a5f3c, [STONE]:0x8c8c8c, [DEEP]:0x5d5f66, [BEDROCK]:0x2b2b2e,
+  [COAL]:0x3b3f47, [IRON]:0xc9a48a, [GOLD]:0xf2d24b, [WATER]:0x3d7fd6, [WOOD]:0x6b4a2b,
+  [LEAVES]:0x3d7d2a, [PLANK]:0xb48a52, [FLOOR]:0x9c7444, [ROOF]:0x8a3b2f, [BED]:0xc0392b, [SAND]:0xd8c98c,
+};
+const solid = b => b !== AIR && b !== WATER;
+const vox = new Uint8Array(SX*SY*SZ);
+const I = (x,y,z) => (y*SZ+z)*SX+x;
+const inb = (x,y,z) => x>=0 && y>=0 && z>=0 && x<SX && y<SY && z<SZ;
+const set = (x,y,z,b) => { if (inb(x,y,z)) vox[I(x,y,z)] = b; };
+const get = (x,y,z) => inb(x,y,z) ? vox[I(x,y,z)] : AIR;
+
+// ---------- noise ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rand = mulberry32(1337);
+const perm = new Uint8Array(512);
+{ const p=[...Array(256).keys()]; for(let i=255;i>0;i--){const j=Math.floor(rand()*(i+1));[p[i],p[j]]=[p[j],p[i]];} for(let i=0;i<512;i++)perm[i]=p[i&255]; }
+const fade=t=>t*t*t*(t*(t*6-15)+10), lerp=(a,b,t)=>a+(b-a)*t;
+function grad(h,x,y,z){const u=h<8?x:y, v=h<4?y:(h===12||h===14?x:z); return((h&1)?-u:u)+((h&2)?-v:v);}
+function noise3(x,y,z){
+  const fx=Math.floor(x),fy=Math.floor(y),fz=Math.floor(z);
+  const X=fx&255,Y=fy&255,Z=fz&255; x-=fx;y-=fy;z-=fz;
+  const u=fade(x),v=fade(y),w=fade(z);
+  const A=perm[X]+Y,AA=perm[A]+Z,AB=perm[A+1]+Z,B=perm[X+1]+Y,BA=perm[B]+Z,BB=perm[B+1]+Z;
+  return lerp(lerp(lerp(grad(perm[AA]&15,x,y,z),grad(perm[BA]&15,x-1,y,z),u),lerp(grad(perm[AB]&15,x,y-1,z),grad(perm[BB]&15,x-1,y-1,z),u),v),
+              lerp(lerp(grad(perm[AA+1]&15,x,y,z-1),grad(perm[BA+1]&15,x-1,y,z-1),u),lerp(grad(perm[AB+1]&15,x,y-1,z-1),grad(perm[BB+1]&15,x-1,y-1,z-1),u),v),w);
+}
+function fbm2(x,z,oct){let s=0,a=1,f=1,n=0;for(let i=0;i<oct;i++){s+=a*noise3(x*f,0.5+i*17.3,z*f);n+=a;a*=.5;f*=2}return s/n}
+
+// ---------- terrain heights ----------
+const H = new Int32Array(SX*SZ), riverD = new Float32Array(SX*SZ);
+for (let x=0;x<SX;x++) for (let z=0;z<SZ;z++) {
+  let h = 37 + fbm2(x*0.03, z*0.03, 4)*12;
+  const d = Math.hypot(x-60, z-12);
+  h += Math.max(0, 1-d/30) * 20 * (0.75 + 0.25*fbm2(x*0.08+9, z*0.08+9, 2));
+  const rz = 50 + Math.sin(x*0.09)*6 + fbm2(x*0.05, 3, 2)*5;
+  const dr = Math.abs(z-rz); riverD[x*SZ+z] = dr;
+  if (dr < 7) { const t=dr/7, s=t*t*(3-2*t); h = lerp(WATER_LEVEL-3, h, s); }
+  H[x*SZ+z] = Math.min(SY-8, Math.floor(h));
+}
+const cx=16, cz=18;
+let sum=0, cnt=0;
+for (let x=cx-8;x<=cx+10;x++) for (let z=cz-7;z<=cz+7;z++){ sum+=H[x*SZ+z]; cnt++; }
+const Hs = Math.max(WATER_LEVEL+4, Math.round(sum/cnt));
+for (let x=cx-8;x<=cx+10;x++) for (let z=cz-7;z<=cz+7;z++) H[x*SZ+z]=Hs;
+
+for (let x=0;x<SX;x++) for (let z=0;z<SZ;z++) {
+  const h=H[x*SZ+z], sandy = h<=WATER_LEVEL+1;
+  for (let y=0;y<=h;y++) {
+    let b;
+    if (y===0) b=BEDROCK;
+    else if (y===h) b = sandy ? SAND : (h>50 ? STONE : GRASS);
+    else if (y>h-4) b = sandy ? SAND : (h>50 ? STONE : DIRT);
+    else b = y<16 ? DEEP : STONE;
+    set(x,y,z,b);
+  }
+  for (let y=h+1;y<=WATER_LEVEL;y++) set(x,y,z,WATER);
+}
+for (let x=0;x<SX;x++) for (let z=0;z<SZ;z++) {
+  const h=H[x*SZ+z];
+  for (let y=2;y<h-5;y++) {
+    const n1=noise3(x*.06,y*.09,z*.06), n2=noise3(x*.06+100,y*.09,z*.06+100);
+    const spaghetti = n1*n1+n2*n2 < 0.0045;
+    const cheese = noise3(x*.045+200,y*.08,z*.045) > 0.40 && y < h-9;
+    if (spaghetti || cheese) { set(x,y,z,AIR); continue; }
+    if (y<12 && noise3(x*.16+300,y*.16,z*.16) > 0.5) set(x,y,z,GOLD);
+    else if (y<30 && noise3(x*.14+400,y*.14,z*.14) > 0.45) set(x,y,z,IRON);
+    else if (noise3(x*.12+500,y*.12,z*.12) > 0.45) set(x,y,z,COAL);
+  }
+}
+for (let i=0;i<70;i++) {
+  const x=2+Math.floor(rand()*(SX-4)), z=2+Math.floor(rand()*(SZ-4));
+  if (x>cx-10 && x<cx+42 && z>cz-9 && z<cz+9) continue;
+  if (riverD[x*SZ+z] < 8) continue;
+  const h=H[x*SZ+z]; if (get(x,h,z)!==GRASS) continue;
+  for (let y=h+1;y<=h+4;y++) set(x,y,z,WOOD);
+  for (let dx=-2;dx<=2;dx++) for (let dz=-2;dz<=2;dz++) for (let dy=3;dy<=4;dy++)
+    if (!(Math.abs(dx)===2&&Math.abs(dz)===2) && get(x+dx,h+dy,z+dz)===AIR) set(x+dx,h+dy,z+dz,LEAVES);
+  for (let dx=-1;dx<=1;dx++) for (let dz=-1;dz<=1;dz++) set(x+dx,h+5,z+dz,LEAVES);
+}
+const x0=cx-5,x1=cx+5,z0=cz-4,z1=cz+4;
+for (let x=x0;x<=x1;x++) for (let z=z0;z<=z1;z++) {
+  set(x,Hs,z,FLOOR);
+  const edge = x===x0||x===x1||z===z0||z===z1;
+  for (let y=Hs+1;y<=Hs+9;y++) {
+    if (y===Hs+5) set(x,y,z,FLOOR);
+    else if (edge) set(x,y,z,PLANK);
+  }
+  set(x,Hs+10,z,ROOF);
+  if (x>x0&&x<x1&&z>z0&&z<z1) set(x,Hs+11,z,ROOF);
+  if (x>x0+1&&x<x1-1&&z>z0+1&&z<z1-1) set(x,Hs+12,z,ROOF);
+}
+set(cx,Hs+1,z0,AIR); set(cx,Hs+2,z0,AIR);
+for (const wx of [cx-3,cx+3]) { set(wx,Hs+3,z0,AIR); set(wx,Hs+8,z0,AIR); set(wx,Hs+3,z1,AIR); set(wx,Hs+8,z1,AIR); }
+for (const wz of [cz-2,cz+2]) { set(x0,Hs+3,wz,AIR); set(x0,Hs+8,wz,AIR); }
+set(x1-1,Hs+5,z1-1,AIR); set(x1-1,Hs+5,z1-2,AIR);
+for (let s=0;s<4;s++) set(x1-1,Hs+1+s,z1-5+s,PLANK);
+set(cx-2,Hs+1,cz,WOOD); set(cx-1,Hs+1,cz,WOOD);
+set(x0+1,Hs+6,z1-1,BED); set(x0+2,Hs+6,z1-1,BED);
+set(x0+1,Hs+6,z0+1,BED); set(x0+2,Hs+6,z0+1,BED);
+const mineY=18, nSteps=Hs-mineY, sx=cx+10;
+for (let i=0;i<=nSteps;i++) {
+  const x=sx+i, yf=Hs-i;
+  for (let z=cz-1;z<=cz+1;z++) { set(x,yf,z,STONE); for (let y=yf+1;y<=yf+3;y++) set(x,y,z,AIR); }
+}
+const rx0=sx+nSteps+1, rx1=rx0+8;
+for (let x=rx0;x<=rx1;x++) for (let z=cz-4;z<=cz+4;z++) {
+  set(x,mineY,z,STONE);
+  for (let y=mineY+1;y<=mineY+3;y++) set(x,y,z,AIR);
+}
+const jobs = new Map();   // voxel index -> 'dig' | 'wall' | 'floor'
+for (let z=cz-3;z<=cz+3;z++) for (let y=mineY+1;y<=mineY+3;y++) {
+  const r=rand(); set(rx1+1,y,z, r<0.35?IRON:(r<0.5?GOLD:STONE)); jobs.set(I(rx1+1,y,z),'dig');
+}
+
+// ---------- discovery ----------
+const disc = new Uint8Array(SX*SY*SZ);
+const D6=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+function flood(q){
+  while (q.length) { const z=q.pop(),y=q.pop(),x=q.pop();
+    for (const [dx,dy,dz] of D6) { const nx=x+dx,ny=y+dy,nz=z+dz; if(!inb(nx,ny,nz))continue; const i=I(nx,ny,nz);
+      if(!disc[i] && !solid(vox[i])){disc[i]=1;q.push(nx,ny,nz);} } }
+}
+{ const q=[];
+  for (let x=0;x<SX;x++) for (let z=0;z<SZ;z++) { const i=I(x,SY-1,z); if(!solid(vox[i])){disc[i]=1;q.push(x,SY-1,z);} }
+  flood(q); }
+
+// ---------- scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(devicePixelRatio); renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const canvas = renderer.domElement;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x9cc7e8);
+const camera = new THREE.PerspectiveCamera(40, innerWidth/innerHeight, 0.5, 1000);
+camera.position.set(70, 85, 95);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(4, 24, 0); controls.update();
+const world = new THREE.Group(); world.position.set(-SX/2, 0, -SZ/2); scene.add(world);
+
+const FACES = [
+  { d:[ 1,0,0], c:[[1,0,0],[1,1,0],[1,1,1],[1,0,1]], s:.80 },
+  { d:[-1,0,0], c:[[0,0,1],[0,1,1],[0,1,0],[0,0,0]], s:.80 },
+  { d:[0, 1,0], c:[[0,1,1],[1,1,1],[1,1,0],[0,1,0]], s:1.0 },
+  { d:[0,-1,0], c:[[0,0,0],[1,0,0],[1,0,1],[0,0,1]], s:.50 },
+  { d:[0,0, 1], c:[[1,0,1],[1,1,1],[0,1,1],[0,0,1]], s:.66 },
+  { d:[0,0,-1], c:[[0,0,0],[0,1,0],[1,1,0],[1,0,0]], s:.66 },
+];
+const CAP = new THREE.Color(0x14171d);
+let cut=SY-1, caps=true, fog=true;
+const raw = (x,y,z) => {
+  if (y<0) return BEDROCK; if (!inb(x,y,z)) return AIR;
+  const i=I(x,y,z), b=vox[i];
+  return (fog && !solid(b) && !disc[i]) ? STONE : b;
+};
+const eff = (x,y,z) => y>cut ? AIR : raw(x,y,z);
+const hash = (x,y,z) => { let h=(x*374761393 + y*668265263 + z*2147483647)|0; h=(h^(h>>>13))*1274126177|0; return ((h>>>0)%1000)/1000; };
+
+let solidMesh, waterMesh;
+const mat = new THREE.MeshBasicMaterial({ vertexColors:true });
+const wmat = new THREE.MeshBasicMaterial({ vertexColors:true, transparent:true, opacity:0.7, depthWrite:false });
+function buildWorld() {
+  const P=[],C=[],IX=[], WP=[],WC=[],WI=[];
+  const col=new THREE.Color();
+  const push=(Pa,Ca,Ia,x,y,z,f,c)=>{ const base=Pa.length/3;
+    for (const [a,b,d] of f.c){ Pa.push(x+a,y+b,z+d); Ca.push(c.r,c.g,c.b); }
+    Ia.push(base,base+1,base+2,base,base+2,base+3); };
+  for (let y=0;y<=cut;y++) for (let z=0;z<SZ;z++) for (let x=0;x<SX;x++) {
+    const b=eff(x,y,z); if (b===AIR) continue;
+    if (b===WATER) {
+      for (const f of FACES) { if (eff(x+f.d[0],y+f.d[1],z+f.d[2])!==AIR) continue;
+        col.setHex(COLOR[WATER]).multiplyScalar(f.s); push(WP,WC,WI,x,y,z,f,col); }
+      continue;
+    }
+    const jitter=0.93+hash(x,y,z)*0.1;
+    for (const f of FACES) {
+      if (solid(eff(x+f.d[0],y+f.d[1],z+f.d[2]))) continue;
+      col.setHex(COLOR[b]).multiplyScalar(f.s*jitter);
+      if (caps && f.d[1]===1 && y===cut && solid(raw(x,y+1,z))) col.lerp(CAP, 0.68);
+      push(P,C,IX,x,y,z,f,col);
+    }
+  }
+  for (const m of [solidMesh,waterMesh]) if (m){ world.remove(m); m.geometry.dispose(); }
+  const mk=(Pa,Ca,Ia,m)=>{ const g=new THREE.BufferGeometry();
+    g.setAttribute('position',new THREE.Float32BufferAttribute(Pa,3));
+    g.setAttribute('color',new THREE.Float32BufferAttribute(Ca,3));
+    g.setIndex(Ia); const mesh=new THREE.Mesh(g,m); world.add(mesh); return mesh; };
+  solidMesh=mk(P,C,IX,mat); waterMesh=mk(WP,WC,WI,wmat);
+  for (const o of colonists) o.visible = o.userData.y <= cut;
+}
+
+// ---------- colonists ----------
+const colonists=[];
+function colonist(x,y,z,shirt){
+  const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.BoxGeometry(.55,1.0,.4), new THREE.MeshBasicMaterial({color:shirt}));
+  body.position.y=.7; g.add(body);
+  const head=new THREE.Mesh(new THREE.BoxGeometry(.45,.45,.45), new THREE.MeshBasicMaterial({color:0xf2c9a0}));
+  head.position.y=1.45; g.add(head);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(.45,.6,16), new THREE.MeshBasicMaterial({color:0xf08a3c, side:THREE.DoubleSide}));
+  ring.rotation.x=-Math.PI/2; ring.position.y=.05; g.add(ring);
+  g.position.set(x+.5,y,z+.5); g.userData.y=y; world.add(g); colonists.push(g);
+}
+colonist(cx+8,Hs+1,cz+3,0x2e86de);
+colonist(cx+1,Hs+1,cz-1,0x27ae60);
+colonist(cx-1,Hs+6,cz+1,0x8e44ad);
+colonist(sx+6,Hs-6+1,cz,0xe67e22);
+colonist(rx1-1,mineY+1,cz-1,0xc0392b);
+colonist(rx1,mineY+1,cz+2,0x16a085);
+
+// ---------- job + preview rendering (instanced boxes) ----------
+const MAXI = 40000;
+const boxGeo = new THREE.BoxGeometry(1.04,1.04,1.04);
+function inst(color, opacity){
+  const m=new THREE.InstancedMesh(boxGeo, new THREE.MeshBasicMaterial({color,transparent:true,opacity,depthWrite:false}), MAXI);
+  m.count=0; m.frustumCulled=false; world.add(m); return m;
+}
+const JOB_COLOR = { dig:0xffd23f, wall:0x4aa3ff, floor:0x3fe0c5, cancel:0xff5a5a };
+const jobMesh = { dig:inst(JOB_COLOR.dig,.45), wall:inst(JOB_COLOR.wall,.45), floor:inst(JOB_COLOR.floor,.45) };
+const previewMesh = inst(0xffffff,.35);
+const m4 = new THREE.Matrix4();
+const unI = i => { const x=i%SX, r=(i-x)/SX, z=r%SZ, y=(r-z)/SZ; return [x,y,z]; };
+function buildJobs(){
+  for (const k in jobMesh) jobMesh[k].count=0;
+  for (const [i,t] of jobs) { const [x,y,z]=unI(i); if (y>cut) continue;
+    const m=jobMesh[t]; if (m.count>=MAXI) continue;
+    m4.makeTranslation(x+.5,y+.5,z+.5); m.setMatrixAt(m.count++,m4); }
+  for (const k in jobMesh) jobMesh[k].instanceMatrix.needsUpdate=true;
+  document.getElementById('count').textContent = jobs.size ? `${jobs.size} jobs queued` : 'no jobs queued';
+}
+const hover = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.06,1.06,1.06)), new THREE.LineBasicMaterial({color:0xffffff}));
+hover.visible=false; world.add(hover);
+
+// ---------- tools ----------
+let tool='none';
+const statusEl=document.getElementById('status');
+const isBuild = t => t==='wall' || t==='floor';
+function setTool(t){
+  tool=t;
+  for (const b of document.querySelectorAll('[data-tool]')) b.classList.toggle('active', b.dataset.tool===t);
+  controls.mouseButtons = t==='none'
+    ? { LEFT:THREE.MOUSE.ROTATE, MIDDLE:THREE.MOUSE.DOLLY, RIGHT:THREE.MOUSE.PAN }
+    : { LEFT:-1, MIDDLE:THREE.MOUSE.PAN, RIGHT:THREE.MOUSE.ROTATE };
+  hover.visible=false; cancelDrag();
+  statusEl.textContent = {
+    none:'Camera: left-drag orbits, double-click a block to jump to its level.',
+    dig:'Dig: drag over blocks. Hold the mouse and press PgDn to dig several levels deep.',
+    wall:'Wall: drag a rectangle to build walls around its outline. Hold and press PgUp for taller walls.',
+    floor:'Floor: drag to fill a rectangle with floor. Go up a level to put a floor on top of walls.',
+    cancel:'Cancel: drag over marked jobs to remove them.',
+  }[t];
+}
+for (const b of document.querySelectorAll('[data-tool]')) b.addEventListener('click',()=>setTool(b.dataset.tool));
+
+const ray=new THREE.Raycaster(), ndc=new THREE.Vector2();
+let lastMouse=null;
+function setRay(e){ const r=canvas.getBoundingClientRect(); ndc.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1); ray.setFromCamera(ndc,camera); }
+// What the mouse points at: the hit block, the empty cell in front of it, and the face normal
+function pick(e){
+  setRay(e);
+  const hit = ray.intersectObject(solidMesh)[0]; if (!hit) return null;
+  const p = world.worldToLocal(hit.point.clone()), n = hit.face.normal;
+  const inner = p.clone().addScaledVector(n,-0.01).floor(), outer = p.clone().addScaledVector(n,0.01).floor();
+  return { inner, outer, n };
+}
+// Grid cell on a horizontal plane at height planeY (local coords)
+function onPlane(e, planeY){
+  setRay(e);
+  const o=world.worldToLocal(ray.ray.origin.clone()), d=ray.ray.direction;
+  if (Math.abs(d.y)<1e-6) return null;
+  const t=(planeY-o.y)/d.y; if (t<0) return null;
+  return { x:Math.floor(o.x+d.x*t), z:Math.floor(o.z+d.z*t) };
+}
+// Which level a tool acts on, and which column, from a fresh pick
+function toolTarget(e){
+  const h=pick(e); if (!h) return null;
+  if (cut < SY-1) return { x:h.inner.x, z:h.inner.z, y:cut };
+  const c = (isBuild(tool) ? h.outer : h.inner);   // top level: act on the surface you clicked
+  return { x:c.x, z:c.z, y:c.y };
+}
+
+let drag=null;   // { ax, az, ay, bx, bz, cutAtStart, planeY }
+function dragCells(){
+  if (!drag) return [];
+  const xa=Math.min(drag.ax,drag.bx), xb=Math.max(drag.ax,drag.bx), za=Math.min(drag.az,drag.bz), zb=Math.max(drag.az,drag.bz);
+  const yEnd = drag.ay + (cut - drag.cutAtStart);
+  const ya=Math.max(1,Math.min(drag.ay,yEnd)), yb=Math.min(SY-1,Math.max(drag.ay,yEnd));
+  const out=[];
+  for (let y=ya;y<=yb;y++) for (let z=za;z<=zb;z++) for (let x=xa;x<=xb;x++) {
+    if (!inb(x,y,z)) continue;
+    if (tool==='wall' && !(x===xa||x===xb||z===za||z===zb)) continue;
+    const i=I(x,y,z), b=raw(x,y,z);
+    if (tool==='dig'    && (!solid(b) || b===BEDROCK)) continue;
+    if (isBuild(tool)   && b!==AIR) continue;
+    if (tool==='cancel' && !jobs.has(i)) continue;
+    out.push(i);
+    if (out.length>=MAXI) return out;
+  }
+  return out;
+}
+function buildPreview(){
+  const cells=dragCells();
+  previewMesh.material.color.setHex(JOB_COLOR[tool]);
+  previewMesh.count=0;
+  for (const i of cells){ const [x,y,z]=unI(i); if (y>cut) continue; m4.makeTranslation(x+.5,y+.5,z+.5); previewMesh.setMatrixAt(previewMesh.count++,m4); }
+  previewMesh.instanceMatrix.needsUpdate=true;
+  const sx=Math.abs(drag.bx-drag.ax)+1, sz=Math.abs(drag.bz-drag.az)+1, sy=Math.abs(cut-drag.cutAtStart)+1;
+  statusEl.textContent = `${tool}: ${sx} × ${sz}${sy>1?` × ${sy} levels`:''}  →  ${cells.length} blocks  (release to confirm, Esc to cancel)`;
+}
+function cancelDrag(){ drag=null; previewMesh.count=0; previewMesh.instanceMatrix.needsUpdate=true; }
+
+canvas.addEventListener('pointerdown', e=>{
+  if (tool==='none' || e.button!==0) return;
+  const t=toolTarget(e); if (!t) return;
+  drag={ ax:t.x, az:t.z, ay:t.y, bx:t.x, bz:t.z, cutAtStart:cut, planeY: isBuild(tool) ? t.y : t.y+1 };
+  canvas.setPointerCapture(e.pointerId);
+  buildPreview();
+});
+canvas.addEventListener('pointermove', e=>{
+  lastMouse=e;
+  if (tool==='none') return;
+  if (drag) { const c=onPlane(e,drag.planeY); if (c){ drag.bx=c.x; drag.bz=c.z; buildPreview(); } return; }
+  const t=toolTarget(e);
+  hover.visible=!!t; if (t) hover.position.set(t.x+.5,t.y+.5,t.z+.5);
+});
+canvas.addEventListener('pointerup', e=>{
+  if (!drag || e.button!==0) return;
+  const cells=dragCells();
+  for (const i of cells) { if (tool==='cancel') jobs.delete(i); else jobs.set(i,tool); }
+  cancelDrag(); buildJobs(); setTool(tool);
+});
+canvas.addEventListener('dblclick', e=>{
+  if (tool!=='none') return;
+  const h=pick(e); if (!h) return;
+  setCut(h.n.y>0.5 ? h.inner.y+1 : h.inner.y);   // clicked a floor: view the level you'd stand on
+});
+
+// ---------- colonists "work" (no AI: just pops jobs in a sensible order) ----------
+let working=false, workTimer=null;
+function nextJob(){
+  let best=null, bestScore=-Infinity;
+  for (const [i,t] of jobs) { const y=unI(i)[1]; const s = t==='dig' ? y : -y + 1000; if (s>bestScore){bestScore=s;best=i;} }
+  return best;
+}
+function doWork(){
+  if (!jobs.size) { toggleWork(false); return; }
+  for (let n=0;n<4 && jobs.size;n++) {
+    const i=nextJob(), t=jobs.get(i); jobs.delete(i);
+    const [x,y,z]=unI(i);
+    if (t==='dig') { vox[i]=AIR; if (!disc[i]) { disc[i]=1; flood([x,y,z]); } }
+    else if (vox[i]===AIR) vox[i] = t==='wall' ? PLANK : FLOOR;
+  }
+  buildWorld(); buildJobs();
+}
+function toggleWork(on){
+  working=on; const b=document.getElementById('work');
+  b.classList.toggle('on',on); b.textContent = on ? '⏸ Pause work' : '▶ Colonists work';
+  clearInterval(workTimer); if (on) workTimer=setInterval(doWork,110);
+}
+document.getElementById('work').addEventListener('click',()=>toggleWork(!working));
+
+// ---------- level control ----------
+const slider=document.getElementById('cut'), label=document.getElementById('level');
+slider.max=SY-1;
+function setCut(v){
+  cut=Math.max(1,Math.min(SY-1,v)); slider.value=cut;
+  const rel=cut-Hs;
+  label.textContent = cut>=SY-1 ? 'View level: top (nothing hidden)'
+    : `View level: Y ${cut}  ·  ${rel<0 ? (-rel)+' below ground' : rel===0 ? 'ground level' : rel+' above ground'}`;
+  buildWorld(); buildJobs();
+  if (drag) buildPreview();
+  else if (lastMouse && tool!=='none') { const t=toolTarget(lastMouse); hover.visible=!!t; if (t) hover.position.set(t.x+.5,t.y+.5,t.z+.5); }
+}
+slider.addEventListener('input',()=>setCut(+slider.value));
+document.getElementById('caps').addEventListener('change',e=>{caps=e.target.checked;buildWorld();});
+document.getElementById('fog').addEventListener('change',e=>{fog=e.target.checked;buildWorld();});
+const presets={ top:SY-1, floor1:Hs+1, mine:mineY+1 };
+for (const btn of document.querySelectorAll('[data-preset]')) btn.addEventListener('click',()=>setCut(presets[btn.dataset.preset]));
+addEventListener('keydown',e=>{
+  if (e.key==='PageUp'){ setCut(cut+1); e.preventDefault(); }
+  else if (e.key==='PageDown'){ setCut(cut-1); e.preventDefault(); }
+  else if (e.key==='Escape'){ if (drag){ cancelDrag(); setTool(tool); } else setTool('none'); }
+  else if (!drag) { const k={d:'dig',w:'wall',f:'floor',x:'cancel'}[e.key.toLowerCase()]; if (k) setTool(k); }
+});
+addEventListener('wheel', e=>{
+  if (!e.shiftKey) return;
+  e.preventDefault(); e.stopPropagation();
+  const d = e.deltaY || e.deltaX; if (d) setCut(cut + (d<0 ? 1 : -1));
+}, { capture:true, passive:false });
+addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+
+setTool('none');
+setCut(SY-1);
+renderer.setAnimationLoop(()=>{ controls.update(); renderer.render(scene,camera); });
+</script>
+</body>
+</html>

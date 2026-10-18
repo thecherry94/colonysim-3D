@@ -3,6 +3,7 @@
 
 # Godot 4+ specific ignores
 .godot/
+/android/
 .nomedia
 
 # Godot-specific ignores
@@ -23,3 +24,6 @@ mono_crash.*.json
 *.exe
 # Uncomment if your project does not version PCK files as runtime dependencies.
 # *.pck
+
+# Superpowers brainstorm scratch
+.superpowers/
