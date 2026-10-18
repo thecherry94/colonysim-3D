@@ -12,9 +12,12 @@ namespace ColonySim.Game;
 /// that races with a mesh re-dirties the chunk, so the stale result is discarded and replaced.
 /// <para>
 /// Two lanes: the initial load is applied within a per-frame time budget, while edits (chunks the world reports
-/// dirty) jump ahead of it and are applied all at once, so the up to 8 chunks one block change touches swap their
-/// meshes in the same frame and never show a seam. The renderer runs after the other nodes each frame, so edits made
-/// during a frame are dispatched in that same frame.
+/// dirty) jump ahead of it. The chunks dirtied in one frame form an edit batch, applied all at once as soon as every
+/// one of its chunks has its result, so the up to 8 chunks one block change touches swap their meshes in the same
+/// frame and never show a seam. Batches complete independently: a steady stream of edits never holds up an earlier
+/// batch, and a chunk dirtied again by a later batch moves to that batch. A batch too big to apply in one frame
+/// (the fog toggle's full remesh, a large cave reveal) goes through the time-budgeted path instead. The renderer runs
+/// after the other nodes each frame, so edits made during a frame are dispatched in that same frame.
 /// </para>
 /// </summary>
 public partial class ChunkRenderer : Node3D
@@ -22,6 +25,8 @@ public partial class ChunkRenderer : Node3D
     const double ApplyBudgetMs = 6.0;
     /// <summary>After this many frames waiting for the rest of its batch, ready edit results are applied anyway.</summary>
     const int MaxEditHoldFrames = 6;
+    /// <summary>Edit batches with more chunks than this are applied within the frame budget, not all at once.</summary>
+    const int MaxAtomicEditChunks = 64;
     const int S = VoxelWorld.ChunkSize;
 
     static ShaderMaterial? _blockMaterial, _liquidMaterial;
@@ -42,20 +47,31 @@ public partial class ChunkRenderer : Node3D
         public Lane Queued;           // which dispatch queue holds it (a stale entry in the other queue is skipped)
         public int RequestedVersion;
         public int AppliedVersion;
+        public EditBatch? Batch;      // the batch of its latest request, until that request's result is applied or queued
         public MeshInstance3D? Opaque, Liquid;
         public ArrayMesh? OpaqueMesh, LiquidMesh;
     }
 
     readonly record struct Result(int Slot, int Version, GArray? Opaque, GArray? Liquid, Exception? Error);
 
+    /// <summary>The chunks dirtied in one frame.</summary>
+    sealed class EditBatch
+    {
+        public readonly HashSet<int> Waiting = new();          // members without a current result yet
+        public readonly Dictionary<int, Result> Staged = new(); // current results held until the batch is complete
+        public bool Budgeted;                                   // too big for one frame: results go to the budget lane
+        public int HeldFrames;                                  // frames spent holding staged results
+
+        public bool IsEmpty => Waiting.Count == 0 && Staged.Count == 0;
+    }
+
     readonly Queue<int> _loadQueue = new(), _editQueue = new();
     readonly ConcurrentQueue<Result> _done = new();
     readonly Queue<Result> _loadReady = new();          // load results waiting for the frame budget
-    readonly HashSet<int> _editPending = new();         // slots whose latest request is an unapplied edit
-    readonly Dictionary<int, Result> _staged = new();   // current edit results held until the batch is complete
+    readonly Queue<Result> _editReady = new();          // results of budgeted edit batches, ahead of the loads
+    readonly List<EditBatch> _batches = new();          // oldest first
     readonly List<Int3> _appliedEdits = new();
     readonly HashSet<Int3> _dirty = new();
-    int _stagedFrames;
     readonly int _maxConcurrent = Math.Max(1, System.Environment.ProcessorCount - 2);
 
     ColonyMap _map = null!;
@@ -69,7 +85,7 @@ public partial class ChunkRenderer : Node3D
     public int PendingChunks { get; private set; }
 
     /// <summary>
-    /// Raised when a batch of edited chunks has swapped in its new meshes, with those chunks.
+    /// Raised once per frame in which edited chunks swapped in their new meshes, with those chunks.
     /// The collection is reused: it is only valid during the call.
     /// </summary>
     public event Action<IReadOnlyCollection<Int3>>? EditsApplied;
@@ -95,7 +111,7 @@ public partial class ChunkRenderer : Node3D
         for (int cy = w.ChunksY - 1; cy >= 0; cy--)
             for (int cz = 0; cz < w.ChunksZ; cz++)
                 for (int cx = 0; cx < w.ChunksX; cx++)
-                    if (!w.IsChunkUniform(new Int3(cx, cy, cz), out _)) Request(Index(cx, cy, cz), edit: false);
+                    if (!w.IsChunkUniform(new Int3(cx, cy, cz), out _)) Request(Index(cx, cy, cz));
     }
 
     /// <summary>Hides chunks lying entirely above <paramref name="level"/>; the shader cuts the rest.</summary>
@@ -110,8 +126,13 @@ public partial class ChunkRenderer : Node3D
         if (_slots.Length == 0) return;
 
         _map.World.ConsumeDirtyChunks(_dirty);
-        foreach (var c in _dirty) Request(Index(c.X, c.Y, c.Z), edit: true);
-        _dirty.Clear();
+        if (_dirty.Count > 0)
+        {
+            var batch = new EditBatch { Budgeted = _dirty.Count > MaxAtomicEditChunks };
+            _batches.Add(batch);
+            foreach (var c in _dirty) Request(Index(c.X, c.Y, c.Z), batch);
+            _dirty.Clear();
+        }
 
         Dispatch();
         ApplyResults();
@@ -119,16 +140,23 @@ public partial class ChunkRenderer : Node3D
 
     int Index(int cx, int cy, int cz) => (cy * _map.World.ChunksZ + cz) * _map.World.ChunksX + cx;
 
-    void Request(int index, bool edit)
+    /// <summary>Requests a new mesh: an edit if <paramref name="batch"/> is given, else part of the initial load.</summary>
+    void Request(int index, EditBatch? batch = null)
     {
         var s = _slots[index];
         if (!s.Tracked) { s.Tracked = true; TotalChunks++; }
         if (s.AppliedVersion == s.RequestedVersion) PendingChunks++;
         s.RequestedVersion++;
-        if (edit)
+        if (batch != null)
         {
-            _editPending.Add(index);
-            if (_staged.Remove(index, out var stale)) Dispose(stale);
+            // Re-dirtied: whatever an earlier batch holds for it is stale now, and it completes with the new batch.
+            if (s.Batch is { } old)
+            {
+                old.Waiting.Remove(index);
+                if (old.Staged.Remove(index, out var stale)) Dispose(stale);
+            }
+            s.Batch = batch;
+            batch.Waiting.Add(index);
             if (s.Queued != Lane.Edit) { s.Queued = Lane.Edit; _editQueue.Enqueue(index); }
         }
         else if (s.Queued == Lane.None) { s.Queued = Lane.Load; _loadQueue.Enqueue(index); }
@@ -170,38 +198,56 @@ public partial class ChunkRenderer : Node3D
 
     void ApplyResults()
     {
-        // Sort finished work: edits are staged for their batch, loads wait for the budget. Stale results are dropped.
+        // Sort finished work: edits are staged in their batch (or queued for the budget if the batch is budgeted),
+        // loads wait for the budget. Stale results are dropped.
         while (_done.TryDequeue(out var r))
         {
-            if (r.Version != _slots[r.Slot].RequestedVersion) Dispose(r);
-            else if (_editPending.Contains(r.Slot))
+            var s = _slots[r.Slot];
+            if (r.Version != s.RequestedVersion) Dispose(r);
+            else if (s.Batch is { } batch)
             {
-                if (_staged.Count == 0) _stagedFrames = 0;
-                _staged[r.Slot] = r;
+                batch.Waiting.Remove(r.Slot);
+                if (batch.Budgeted) { s.Batch = null; _editReady.Enqueue(r); }
+                else batch.Staged[r.Slot] = r;
             }
             else _loadReady.Enqueue(r);
         }
 
-        // Every staged result is current, so the batch is complete once each pending edit has one.
-        if (_staged.Count > 0 && (_staged.Count == _editPending.Count || ++_stagedFrames > MaxEditHoldFrames))
+        // Staged results are always current (a new request discards them), so a batch is complete once none of its
+        // chunks is still waiting. One that has waited too long for its last chunks applies what it has.
+        _appliedEdits.Clear();
+        foreach (var batch in _batches)
         {
-            _appliedEdits.Clear();
-            foreach (var r in _staged.Values)
-            {
-                Apply(r);
-                _editPending.Remove(r.Slot);
-                _appliedEdits.Add(_slots[r.Slot].Coord);
-            }
-            _staged.Clear();
-            EditsApplied?.Invoke(_appliedEdits);
+            if (batch.Staged.Count == 0) continue;
+            if (batch.Waiting.Count > 0 && ++batch.HeldFrames <= MaxEditHoldFrames) continue;
+            foreach (var r in batch.Staged.Values) ApplyEdit(r);
+            batch.Staged.Clear();
         }
+        _batches.RemoveAll(static b => b.IsEmpty);
 
+        // Budgeted edits go before the initial load.
         long start = Stopwatch.GetTimestamp();
-        while (Stopwatch.GetElapsedTime(start).TotalMilliseconds < ApplyBudgetMs && _loadReady.TryDequeue(out var r))
+        bool InBudget() => Stopwatch.GetElapsedTime(start).TotalMilliseconds < ApplyBudgetMs;
+        while (InBudget() && _editReady.TryDequeue(out var r))
+        {
+            if (r.Version != _slots[r.Slot].RequestedVersion) Dispose(r);
+            else ApplyEdit(r);
+        }
+        while (InBudget() && _loadReady.TryDequeue(out var r))
         {
             if (r.Version != _slots[r.Slot].RequestedVersion) Dispose(r);
             else Apply(r);
         }
+
+        if (_appliedEdits.Count > 0) EditsApplied?.Invoke(_appliedEdits);
+    }
+
+    void ApplyEdit(Result r)
+    {
+        var s = _slots[r.Slot];
+        s.Batch = null;
+        Apply(r);
+        _appliedEdits.Add(s.Coord);
     }
 
     void Apply(Result r)
