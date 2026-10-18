@@ -16,12 +16,21 @@ config/icon="res://icon.svg"
 
 [display]
 
+window/size/viewport_width=1600
+window/size/viewport_height=900
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
 
 [dotnet]
 
 project/assembly_name="ColonySim"
+
+[shader_globals]
+
+slice_height={
+"type": "float",
+"value": 100000.0
+}
 
 [physics]
 

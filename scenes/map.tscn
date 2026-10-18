@@ -1,3 +1,6 @@
 [gd_scene format=3 uid="uid://2i40l6ds35ry"]
 
+[ext_resource type="Script" uid="uid://cajupy0xqmdhk" path="res://src/Game/MapScene.cs" id="1_map"]
+
 [node name="World" type="Node3D" unique_id=1594427842]
+script = ExtResource("1_map")
