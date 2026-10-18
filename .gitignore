@@ -27,3 +27,8 @@ mono_crash.*.json
 
 # Superpowers brainstorm scratch
 .superpowers/
+
+bin/
+obj/
+*.user
+tests/visual/shots/

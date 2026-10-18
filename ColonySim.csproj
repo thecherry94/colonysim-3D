@@ -1,0 +1,15 @@
+<Project Sdk="Godot.NET.Sdk/4.7.2">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ColonySim.Game</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="src\Core\**;tests\**" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="src\Core\Core.csproj" />
+  </ItemGroup>
+</Project>
