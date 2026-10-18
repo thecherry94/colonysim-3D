@@ -16,4 +16,12 @@ public static class TestWorlds
             }
         return w;
     }
+
+    /// <summary>Flat world with initial discovery flood, wrapped in a ColonyMap.</summary>
+    public static ColonyMap FlatMap(int size = 64, int surface = 150)
+    {
+        var world = SolidBelow(size, surface);
+        Discovery.InitialFlood(world);
+        return new ColonyMap(new MapSettings(1, size, size, new TerrainParams()), world);
+    }
 }
