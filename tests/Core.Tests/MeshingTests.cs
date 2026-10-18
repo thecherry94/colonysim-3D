@@ -6,6 +6,11 @@ public class MeshingTests
 {
     static PlayerView V(VoxelWorld w) { var v = new PlayerView(w, new TerrainLayers(MapSettings.Create(1, MapSize.Small))); return v; }
     static int Faces(MeshBuffers b) => b.Indices.Count / 6;
+    // Cap quads are axis-aligned rectangles: corner 0 is the min corner, corner 2 the max corner.
+    static IEnumerable<(Vector3 Min, Vector3 Max)> CapRects(MeshBuffers b) =>
+        Enumerable.Range(0, b.Vertices.Count / 4).Select(q => (b.Vertices[q * 4], b.Vertices[q * 4 + 2]));
+    static int CapArea(MeshBuffers b) => (int)CapRects(b).Sum(r => (r.Max.X - r.Min.X) * (r.Max.Z - r.Min.Z));
+    static bool CapCovers(MeshBuffers b, int x, int z) => CapRects(b).Any(r => x >= r.Min.X && x < r.Max.X && z >= r.Min.Z && z < r.Max.Z);
 
     [Fact] public void SingleBlock_SixFaces() { var w = new VoxelWorld(32, 32); w.SetBlock(5, 5, 5, Blocks.Stone); Discovery.InitialFlood(w); var m = ChunkMesher.Build(V(w), new Int3(0, 0, 0)); Assert.Equal(6, Faces(m.Opaque)); Assert.Equal(24, m.Opaque.Vertices.Count); }
     [Fact] public void AdjacentBlocks_CullSharedFaces() { var w = new VoxelWorld(32, 32); w.SetBlock(5, 5, 5, Blocks.Stone); w.SetBlock(6, 5, 5, Blocks.Stone); Discovery.InitialFlood(w); Assert.Equal(10, Faces(ChunkMesher.Build(V(w), new Int3(0, 0, 0)).Opaque)); }
@@ -37,13 +42,52 @@ public class MeshingTests
         var b = ChunkMesher.Build(V(w), new Int3(0, 0, 0)).Opaque; var tops = Enumerable.Range(0, b.Normals.Count).Where(i => b.Normals[i] == Vector3.UnitY && b.Vertices[i].Y == 6);
         Assert.Contains(tops, i => b.Uv2s[i].Y < 1f);
     }
-    [Fact] public void Cap_OneQuadPerSolidColumn_NoneWhereOpen()
+    [Fact] public void Cap_CoversEverySolidColumn_NoneWhereOpen()
     {
         var w = TestWorlds.SolidBelow(32, 60); Discovery.InitialFlood(w); var v = V(w);
-        Assert.Equal(32 * 32, Faces(CapMesher.Build(v, 0, 0, 40).Opaque));
+        Assert.Equal(32 * 32, CapArea(CapMesher.Build(v, 0, 0, 40).Opaque));
         Assert.True(CapMesher.Build(v, 0, 0, 60).Opaque.IsEmpty);
         w.SetBlock(3, 40, 3, Blocks.Air); Discovery.RevealFrom(w, 3, 40, 3);
-        Assert.Equal(32 * 32 - 1, Faces(CapMesher.Build(v, 0, 0, 40).Opaque));
+        var m = CapMesher.Build(v, 0, 0, 40).Opaque;
+        Assert.Equal(32 * 32 - 1, CapArea(m));
+        Assert.False(CapCovers(m, 3, 3));
+    }
+    [Fact] public void Cap_MergesUniformCutIntoOneQuad_WithTiledUvs()
+    {
+        var w = TestWorlds.SolidBelow(32, 60); Discovery.InitialFlood(w);
+        var b = CapMesher.Build(V(w), 0, 0, 40).Opaque;
+        Assert.Equal(1, Faces(b));
+        Assert.Equal(new Vector2(32, 32), new Vector2(b.Uvs.Max(u => u.X), b.Uvs.Max(u => u.Y)));
+        for (int i = 0; i < b.Indices.Count; i += 3)
+        {
+            var (p, q, r) = (b.Vertices[b.Indices[i]], b.Vertices[b.Indices[i + 1]], b.Vertices[b.Indices[i + 2]]);
+            Assert.True(Vector3.Dot(Vector3.Cross(q - p, r - p), Vector3.UnitY) < 0);
+        }
+    }
+    [Fact] public void Cap_KeepsDifferentBlocksApart()
+    {
+        var w = TestWorlds.SolidBelow(32, 60); w.SetBlock(7, 40, 9, Blocks.CoalOre); w.SetBlock(8, 40, 9, Blocks.CoalOre); Discovery.InitialFlood(w);
+        var b = CapMesher.Build(V(w), 0, 0, 40).Opaque;
+        Assert.Equal(32 * 32, CapArea(b));
+        float coal = Blocks.Registry.Get(Blocks.CoalOre).TexTop;
+        var coalQuads = Enumerable.Range(0, b.Vertices.Count / 4).Where(q => b.Uv2s[q * 4].X == coal).ToList();
+        Assert.Single(coalQuads);
+        Assert.Equal(new Vector3(7, 41, 9), b.Vertices[coalQuads[0] * 4]);
+        Assert.Equal(new Vector3(9, 41, 10), b.Vertices[coalQuads[0] * 4 + 2]);
+    }
+
+    [Fact] public void Cap_EmptyColumn_AllocatesNoBuffers()
+    {
+        var w = TestWorlds.SolidBelow(32, 60); Discovery.InitialFlood(w);
+        var m = CapMesher.Build(V(w), 0, 0, 60);
+        Assert.Equal(0, m.Opaque.Vertices.Capacity); Assert.Equal(0, m.Opaque.Indices.Capacity);
+        Assert.Equal(0, m.Liquid.Vertices.Capacity); Assert.Equal(0, m.Liquid.Indices.Capacity);
+    }
+    [Fact] public void Cap_BuffersSizedExactlyToQuadCount()
+    {
+        var w = TestWorlds.SolidBelow(32, 60); w.SetBlock(3, 40, 3, Blocks.Air); Discovery.RevealFrom(w, 3, 40, 3); Discovery.InitialFlood(w);
+        var b = CapMesher.Build(V(w), 0, 0, 40).Opaque;
+        Assert.Equal(b.Vertices.Count, b.Vertices.Capacity); Assert.Equal(b.Uv2s.Count, b.Uv2s.Capacity); Assert.Equal(b.Indices.Count, b.Indices.Capacity);
     }
 
     [Fact] public void BlockOnWorldFloor_HasNoBottomFace()
@@ -89,7 +133,7 @@ public class MeshingTests
     {
         var w = TestWorlds.SolidBelow(32, 60); w.SetBlock(3, 40, 3, Blocks.Water, false); w.SetBlock(4, 40, 4, Blocks.Water, false); w.SetBlock(4, 41, 4, Blocks.Water, false);
         var v = V(w); v.FogEnabled = false; var m = CapMesher.Build(v, 0, 0, 40);
-        Assert.Equal(2, Faces(m.Liquid)); Assert.Equal(32 * 32 - 2, Faces(m.Opaque));
+        Assert.Equal(2, Faces(m.Liquid)); Assert.Equal(32 * 32 - 2, CapArea(m.Opaque));
         Assert.All(m.Liquid.Vertices, p => Assert.Equal(41f, p.Y));
     }
 }

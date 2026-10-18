@@ -1,0 +1,117 @@
+using System.Diagnostics;
+using ColonySim.Core;
+using Godot;
+
+namespace ColonySim.Game;
+
+/// <summary>
+/// Owns the view level. Everything above it is hidden: the block shaders discard above the global
+/// <c>slice_height</c>, chunks entirely above it are hidden, and solid blocks the cut passes through get caps.
+/// PgUp/PgDn and Shift+wheel step one level, Home returns to the top (nothing hidden).
+/// </summary>
+public partial class SliceController : Node
+{
+    const string SliceHeightParam = "slice_height";
+    const float UnslicedHeight = 100000;
+    const int MinLevel = 1;
+
+    ColonyMap _map = null!;
+    ChunkRenderer _chunks = null!;
+    CapRenderer _caps = null!;
+    CameraRig _camera = null!;
+    bool _capsEnabled = true;
+    readonly HashSet<(int, int)> _dirtyColumns = new();
+
+    /// <summary>The highest block Y still drawn. At <see cref="TopLevel"/> nothing is hidden.</summary>
+    public int ViewLevel { get; private set; } = VoxelWorld.Height - 1;
+
+    public int TopLevel => VoxelWorld.Height - 1;
+
+    public bool IsSliced => ViewLevel < TopLevel;
+
+    /// <summary>Time the last <see cref="SetLevel"/> took, including the cap mesh upload.</summary>
+    public float LastLevelChangeMs { get; private set; }
+
+    public event Action<int>? LevelChanged;
+
+    /// <summary>Dark caps on (default) or off. Off still closes the cut, with the blocks' raw top texture.</summary>
+    public bool CapsEnabled
+    {
+        get => _capsEnabled;
+        set { _capsEnabled = value; _caps.Dark = value; }
+    }
+
+    public void Setup(ColonyMap map, ChunkRenderer chunks, CapRenderer caps, CameraRig camera)
+    {
+        _map = map;
+        _chunks = chunks;
+        _caps = caps;
+        _camera = camera;
+        _caps.Dark = _capsEnabled;
+        _chunks.ChunksDirtied += OnChunksDirtied;
+    }
+
+    public override void _ExitTree()
+    {
+        if (_chunks != null) _chunks.ChunksDirtied -= OnChunksDirtied;
+    }
+
+    /// <summary>Sets the view level (clamped to [1, <see cref="TopLevel"/>]) and re-slices, even if unchanged.</summary>
+    public void SetLevel(int level)
+    {
+        long start = Stopwatch.GetTimestamp();
+        ViewLevel = Math.Clamp(level, MinLevel, TopLevel);
+        bool sliced = IsSliced;
+
+        RenderingServer.GlobalShaderParameterSet(SliceHeightParam, sliced ? ViewLevel + 1f : UnslicedHeight);
+        _chunks.SetSliceLevel(ViewLevel);
+        if (sliced) _caps.Rebuild(ViewLevel);
+        else _caps.Clear();
+        _camera.FocusOnLevel(ViewLevel, sliced);
+
+        LastLevelChangeMs = (float)Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+        LevelChanged?.Invoke(ViewLevel);
+    }
+
+    void Step(int delta)
+    {
+        int target = Math.Clamp(ViewLevel + delta, MinLevel, TopLevel);
+        if (target != ViewLevel) SetLevel(target);
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (_map == null) return;
+        if (@event.IsActionPressed(InputActions.LevelUp, allowEcho: true)) Step(+1);
+        else if (@event.IsActionPressed(InputActions.LevelDown, allowEcho: true)) Step(-1);
+        else if (@event.IsActionPressed(InputActions.LevelTop)) { if (IsSliced) SetLevel(TopLevel); }
+        else if (@event is InputEventMouseButton { Pressed: true, ShiftPressed: true } wheel)
+        {
+            // Some platforms turn Shift+wheel into horizontal scrolling, so left/right count as up/down.
+            int delta = wheel.ButtonIndex switch
+            {
+                MouseButton.WheelUp or MouseButton.WheelLeft => +1,
+                MouseButton.WheelDown or MouseButton.WheelRight => -1,
+                _ => 0,
+            };
+            if (delta == 0) return;
+            Step(delta);
+        }
+        else return;
+        GetViewport().SetInputAsHandled();
+    }
+
+    /// <summary>An edit near the cut changes the caps of its column: rebuild those columns right away.</summary>
+    void OnChunksDirtied(IReadOnlyCollection<Int3> chunks)
+    {
+        if (!IsSliced) return;
+        int cut = ViewLevel;
+        _dirtyColumns.Clear();
+        foreach (var c in chunks)
+        {
+            int minY = c.Y * VoxelWorld.ChunkSize, maxY = minY + VoxelWorld.ChunkSize - 1;
+            if (cut + 1 >= minY && cut <= maxY) _dirtyColumns.Add((c.X, c.Z));
+        }
+        if (_dirtyColumns.Count > 0) _caps.RebuildColumns(_dirtyColumns, cut);
+    }
+}

@@ -4,7 +4,7 @@ using Godot;
 
 namespace ColonySim.Game;
 
-/// <summary>Root of the map scene: owns the map, the lighting and the chunk renderer.</summary>
+/// <summary>Root of the map scene: owns the map, the lighting, the renderers, the camera, the slice view and the HUD.</summary>
 public partial class MapScene : Node3D
 {
     public const string ShotsEnv = "COLONYSIM_SHOTS";
@@ -15,6 +15,9 @@ public partial class MapScene : Node3D
     public ColonyMap Map { get; private set; } = null!;
     public ChunkRenderer Chunks { get; private set; } = null!;
     public CameraRig Rig { get; private set; } = null!;
+    public CapRenderer Caps { get; private set; } = null!;
+    public SliceController Slice { get; private set; } = null!;
+    public Hud Hud { get; private set; } = null!;
 
     /// <summary>How long the fallback generation took, or null when the map came from <see cref="GameSession"/>.</summary>
     public double? GenerateMs { get; private set; }
@@ -66,6 +69,19 @@ public partial class MapScene : Node3D
         Rig = new CameraRig { Name = "CameraRig" };
         AddChild(Rig);
         Rig.Setup(Map);
+
+        Caps = new CapRenderer { Name = "Caps" };
+        AddChild(Caps);
+        Caps.Setup(Map);
+
+        Slice = new SliceController { Name = "Slice" };
+        AddChild(Slice);
+        Slice.Setup(Map, Chunks, Caps, Rig);
+        Slice.SetLevel(Slice.TopLevel);
+
+        Hud = new Hud { Name = "Hud" };
+        Hud.Setup(this);
+        AddChild(Hud);
 
         if (shots)
         {

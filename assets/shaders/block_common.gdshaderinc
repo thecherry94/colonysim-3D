@@ -1,7 +1,8 @@
 // Shared by every block-world shader: the global slice cut and block texture sampling.
 global uniform float slice_height;
 
-uniform sampler2DArray blocks : source_color, filter_nearest_mipmap;
+// Repeats so merged slice-cap quads can tile one texture per block.
+uniform sampler2DArray blocks : source_color, filter_nearest_mipmap, repeat_enable;
 
 varying vec3 world_pos;
 

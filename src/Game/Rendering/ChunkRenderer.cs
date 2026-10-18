@@ -55,7 +55,7 @@ public partial class ChunkRenderer : Node3D
     public int PendingChunks { get; private set; }
 
     /// <summary>
-    /// Raised each frame with that frame's dirty chunks, before they are scheduled for meshing.
+    /// Raised on each frame that has dirty chunks, with that frame's dirty chunks, before they are scheduled for meshing.
     /// The collection is reused: it is only valid during the call.
     /// </summary>
     public event Action<IReadOnlyCollection<Int3>>? ChunksDirtied;

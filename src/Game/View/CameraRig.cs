@@ -53,6 +53,15 @@ public partial class CameraRig : Node3D
         UpdateTransform();
     }
 
+    /// <summary>Moves the focus to map column (x, z), clamped to the map; the height keeps following its target.</summary>
+    public void SetFocus(float x, float z)
+    {
+        _focusX = Mathf.Clamp(x, 0, _map.World.SizeX);
+        _focusZ = Mathf.Clamp(z, 0, _map.World.SizeZ);
+        UpdateTargetY();
+        UpdateTransform();
+    }
+
     /// <summary>Sliced views look at the layer just above the cut; unsliced views at the terrain surface.</summary>
     public void FocusOnLevel(int level, bool sliced)
     {
