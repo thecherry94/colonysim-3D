@@ -9,6 +9,12 @@ internal sealed class Chunk
     ushort[]? _blocks;
     ulong[]? _discovery;
 
+    /// <summary>Raw block array, or null while uniform air. For bulk persistence.</summary>
+    internal ushort[]? Blocks { get => _blocks; set => _blocks = value; }
+
+    /// <summary>Raw discovery bitset, or null while nothing is discovered. For bulk persistence.</summary>
+    internal ulong[]? Discovery { get => _discovery; set => _discovery = value; }
+
     public bool IsUniform => _blocks == null;
     public ushort UniformId => 0; // uniform chunks are always Air; filled chunks allocate their array
 

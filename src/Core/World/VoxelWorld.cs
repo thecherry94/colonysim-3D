@@ -67,6 +67,9 @@ public sealed class VoxelWorld
         if (markDirty) MarkDirtyAround(x, y, z);
     }
 
+    /// <summary>Chunk by chunk coordinates, for bulk persistence (bypasses dirty tracking).</summary>
+    internal Chunk ChunkByCoords(int cx, int cy, int cz) => _chunks[ChunkIndex(cx, cy, cz)];
+
     public int GetSurfaceHeight(int x, int z) => _surface[z * SizeX + x];
 
     public void SetSurfaceHeight(int x, int z, int y) => _surface[z * SizeX + x] = y;
