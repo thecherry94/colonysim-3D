@@ -85,7 +85,7 @@ public static class HeightField
         return sorted[Math.Clamp((int)(q * (sorted.Length - 1)), 0, sorted.Length - 1)];
     }
 
-    static FastNoiseLite Noise(int seed, int salt, float frequency, FastNoiseLite.FractalType fractal, int octaves)
+    internal static FastNoiseLite Noise(int seed, int salt, float frequency, FastNoiseLite.FractalType fractal, int octaves)
     {
         var n = new FastNoiseLite(unchecked(seed * 31 + salt * 7919));
         n.SetNoiseType(FastNoiseLite.NoiseType.OpenSimplex2);

@@ -24,4 +24,25 @@ public static class TestWorlds
         Discovery.InitialFlood(world);
         return new ColonyMap(new MapSettings(1, size, size, new TerrainParams()), world);
     }
+
+    /// <summary>FNV-1a hash over every block id in the world.</summary>
+    public static ulong WorldHash(VoxelWorld w)
+    {
+        ulong h = 14695981039346656037UL;
+        for (int y = 0; y < w.SizeY; y++)
+            for (int z = 0; z < w.SizeZ; z++)
+                for (int x = 0; x < w.SizeX; x++)
+                {
+                    ushort b = w.GetBlock(x, y, z);
+                    h = (h ^ (byte)b) * 1099511628211UL;
+                    h = (h ^ (byte)(b >> 8)) * 1099511628211UL;
+                }
+        return h;
+    }
+}
+
+/// <summary>Reports synchronously on the calling thread (unlike <see cref="Progress{T}"/>, which posts to a context).</summary>
+public sealed class SyncProgress<T>(Action<T> report) : IProgress<T>
+{
+    public void Report(T v) => report(v);
 }
