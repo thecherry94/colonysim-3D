@@ -40,4 +40,15 @@ public class VoxelWorldTests
         w.SetDiscovered(1, 3, 1); Assert.Equal(2, w.EditVersion);
         w.SetBlock(-1, 1, 1, Blocks.Dirt); Assert.Equal(2, w.EditVersion);
     }
+
+    [Fact] public void Changed_RaisedForTrackedWritesOnly()
+    {
+        var w = new VoxelWorld(64, 64);
+        var seen = new List<Int3>();
+        w.Changed += (x, y, z) => seen.Add(new Int3(x, y, z));
+        w.SetBlock(1, 1, 1, Blocks.Stone, markDirty: false); w.SetDiscovered(1, 2, 1, markDirty: false); w.SetBlock(-1, 1, 1, Blocks.Dirt);
+        Assert.Empty(seen);
+        w.SetBlock(1, 1, 1, Blocks.Dirt); w.SetDiscovered(1, 3, 1);
+        Assert.Equal(new[] { new Int3(1, 1, 1), new Int3(1, 3, 1) }, seen);
+    }
 }

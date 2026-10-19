@@ -1,6 +1,6 @@
 namespace ColonySim.Core;
 
-/// <summary>Everything that makes up one colony's map: settings, voxels, player view and pending jobs.</summary>
+/// <summary>Everything that makes up one colony's map: settings, voxels, player view, pending jobs and navigation.</summary>
 public sealed class ColonyMap
 {
     public ColonyMap(MapSettings settings, VoxelWorld world, JobQueue? jobs = null, StartSite site = default)
@@ -23,4 +23,9 @@ public sealed class ColonyMap
     public TerrainLayers Layers { get; }
     public PlayerView View { get; }
     public JobQueue Jobs { get; }
+
+    Navigation? _nav;
+
+    /// <summary>Sections and connectivity, built on first access (main thread); from then on it tracks <see cref="VoxelWorld.Changed"/>.</summary>
+    public Navigation Nav => _nav ??= new Navigation(this);
 }

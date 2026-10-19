@@ -36,6 +36,9 @@ public sealed class VoxelWorld
     /// </summary>
     public int EditVersion { get; private set; }
 
+    /// <summary>Raised on the main thread with the cell of every tracked write (<c>markDirty</c>: blocks and discovery).</summary>
+    public event Action<int, int, int>? Changed;
+
     public VoxelWorld(int sizeX, int sizeZ)
     {
         if (sizeX <= 0 || sizeX % ChunkSize != 0) throw new ArgumentException("sizeX must be a positive multiple of 32", nameof(sizeX));
@@ -70,7 +73,7 @@ public sealed class VoxelWorld
     {
         if (!InBounds(x, y, z)) return;
         ChunkAt(x, y, z, out int i).Set(i, id);
-        if (markDirty) MarkDirtyAround(x, y, z);
+        if (markDirty) Tracked(x, y, z);
     }
 
     public bool IsDiscovered(int x, int y, int z)
@@ -92,7 +95,7 @@ public sealed class VoxelWorld
     {
         if (!InBounds(x, y, z)) return;
         ChunkAt(x, y, z, out int i).SetDiscovered(i);
-        if (markDirty) MarkDirtyAround(x, y, z);
+        if (markDirty) Tracked(x, y, z);
     }
 
     /// <summary>Chunk by chunk coordinates, for bulk persistence (bypasses dirty tracking).</summary>
@@ -128,6 +131,12 @@ public sealed class VoxelWorld
             for (int cz = 0; cz < ChunksZ; cz++)
                 for (int cx = 0; cx < ChunksX; cx++)
                     _dirty.Add(new Int3(cx, cy, cz));
+    }
+
+    void Tracked(int x, int y, int z)
+    {
+        MarkDirtyAround(x, y, z);
+        Changed?.Invoke(x, y, z);
     }
 
     // Ambient occlusion reads diagonals, so every chunk touching the 3x3x3 neighborhood is dirtied.

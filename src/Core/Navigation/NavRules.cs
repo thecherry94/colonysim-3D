@@ -10,6 +10,58 @@ public sealed class NavRules(PlayerView view)
     /// <summary>The smallest span <see cref="GetMoves"/> accepts.</summary>
     public const int MaxMoves = 48;
 
+    /// <summary>The rules themselves, compiled for reading the view.</summary>
+    internal NavRules<KnownBlocks> Core { get; } = new(new KnownBlocks(view));
+
+    /// <inheritdoc cref="NavRules{TBlocks}.IsPassable"/>
+    public bool IsPassable(Int3 c) => Core.IsPassable(c);
+
+    /// <inheritdoc cref="NavRules{TBlocks}.IsStandable(Int3)"/>
+    public bool IsStandable(Int3 c) => Core.IsStandable(c);
+
+    /// <inheritdoc cref="NavRules{TBlocks}.GetMoves"/>
+    public int GetMoves(Int3 from, Span<Move> into) => Core.GetMoves(from, into);
+
+    /// <inheritdoc cref="NavRules{TBlocks}.TryGetMove"/>
+    public bool TryGetMove(Int3 from, Int3 to, out Move move) => Core.TryGetMove(from, to, out move);
+
+    /// <inheritdoc cref="NavRules{TBlocks}.TopStandable"/>
+    public int TopStandable(int x, int z) => Core.TopStandable(x, z);
+
+    /// <inheritdoc cref="NavRules{TBlocks}.FindStandableNear"/>
+    public bool FindStandableNear(Int3 around, int radius, out Int3 cell) => Core.FindStandableNear(around, radius, out cell);
+}
+
+/// <summary>Where the move rules read known blocks. A struct, so the JIT compiles the rules separately for each source.</summary>
+internal interface IKnownBlocks
+{
+    VoxelWorld World { get; }
+
+    /// <summary>The known block of a cell the caller has bounds-checked.</summary>
+    ushort GetInBounds(int x, int y, int z);
+}
+
+/// <summary>The player's known world.</summary>
+internal readonly struct KnownBlocks(PlayerView view) : IKnownBlocks
+{
+    public VoxelWorld World => view.World;
+    public ushort GetInBounds(int x, int y, int z) => view.GetKnownBlockInBounds(x, y, z);
+}
+
+/// <summary>The known world with one cell's block replaced: what an edit would do, without making it.</summary>
+internal readonly struct OverlaidBlocks(PlayerView view, Int3 cell, ushort block) : IKnownBlocks
+{
+    public VoxelWorld World => view.World;
+
+    public ushort GetInBounds(int x, int y, int z) =>
+        x == cell.X && y == cell.Y && z == cell.Z ? block : view.GetKnownBlockInBounds(x, y, z);
+}
+
+/// <summary>The rules behind <see cref="NavRules"/>, over any source of known blocks.</summary>
+internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, IKnownBlocks
+{
+    const int MaxMoves = NavRules.MaxMoves;
+
     const byte SolidBit = 1, NaturalBit = 2, LadderBit = 4, LiquidBit = 8;
     const byte NaturalSolid = SolidBit | NaturalBit;
     const byte OutOfBounds = SolidBit; // impassable, and never natural, a ladder or liquid
@@ -32,7 +84,7 @@ public sealed class NavRules(PlayerView view)
         }
     }
 
-    readonly VoxelWorld _world = view.World;
+    readonly VoxelWorld _world = blocks.World;
 
     /// <summary>In bounds, and the known block is not solid: air, water and ladders pass.</summary>
     public bool IsPassable(Int3 c) => (At(c) & SolidBit) == 0;
@@ -134,9 +186,37 @@ public sealed class NavRules(PlayerView view)
         return best != int.MaxValue;
     }
 
-    ushort Known(Int3 c) => view.GetKnownBlock(c.X, c.Y, c.Z);
+    /// <summary>
+    /// <see cref="IsStandable(Int3)"/> for the cells (x, y0 .. y0 + into.Length − 1, z), reading each block once: the
+    /// fast way to find every standable cell of a chunk.
+    /// </summary>
+    public void StandableColumn(int x, int z, int y0, Span<bool> into)
+    {
+        byte below = At(new(x, y0 - 1, z)), here = At(new(x, y0, z));
+        for (int i = 0; i < into.Length; i++)
+        {
+            int y = y0 + i;
+            byte above = At(new(x, y + 1, z));
+            into[i] = y >= 1 && y <= 254 && Stands(here, above, below);
+            below = here;
+            here = above;
+        }
+    }
 
-    byte At(Int3 c) => _world.InBounds(c.X, c.Y, c.Z) ? Flags[view.GetKnownBlockInBounds(c.X, c.Y, c.Z)] : OutOfBounds;
+    /// <summary>The cost of the way back along <paramref name="move"/> (made from <paramref name="from"/>): the same move, with the liquid factor of the other end.</summary>
+    public float ReverseCost(Int3 from, Move move)
+    {
+        float cost = move.Cost;
+        if ((At(move.To) & LiquidBit) != 0) cost /= 3;
+        if ((At(from) & LiquidBit) != 0) cost *= 3;
+        return cost;
+    }
+
+    ushort Known(Int3 c) => _world.InBounds(c.X, c.Y, c.Z) ? KnownInBounds(c) : Blocks.Air;
+
+    ushort KnownInBounds(Int3 c) => blocks.GetInBounds(c.X, c.Y, c.Z);
+
+    byte At(Int3 c) => _world.InBounds(c.X, c.Y, c.Z) ? Flags[KnownInBounds(c)] : OutOfBounds;
 
     bool IsNaturalSolid(Int3 c) => (At(c) & NaturalSolid) == NaturalSolid;
 
@@ -150,7 +230,7 @@ public sealed class NavRules(PlayerView view)
     {
         feet = OutOfBounds;
         if (c.Y < 1 || c.Y > 254 || !_world.InBounds(c.X, c.Y, c.Z)) return false;
-        feet = Flags[view.GetKnownBlockInBounds(c.X, c.Y, c.Z)];
+        feet = Flags[KnownInBounds(c)];
         return (feet & SolidBit) == 0 && Stands(feet, At(c + Int3.Up), At(c + Int3.Down));
     }
 
