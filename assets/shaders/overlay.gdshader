@@ -18,5 +18,5 @@ void fragment() {
 	// top of every cube on the view level and leave its marker invisible on the cut.
 	if (cell_center_y > slice_height) discard;
 	ALBEDO = color.rgb * COLOR.rgb;
-	ALPHA = color.a;
+	ALPHA = color.a * COLOR.a;
 }

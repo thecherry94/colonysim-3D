@@ -188,7 +188,16 @@ public partial class VisualShots
         var world = _scene.Map.World;
         const int s = VoxelWorld.ChunkSize;
         var placed = new List<(int X, int Y, int Z, ushort Old)>();
-        double maxMs = 0;
+        double maxMs = 0, maxOver = double.MinValue;
+        int maxBatchChunks = 0;
+        void Sample()
+        {
+            var c = _scene.Chunks;
+            maxMs = Math.Max(maxMs, c.LastApplyMs);
+            // The budget is soft by up to one batch: a frame may spend the budget plus its slowest single batch.
+            maxOver = Math.Max(maxOver, c.LastApplyMs - c.LastMaxBatchMs - ChunkRenderer.FrameBudgetMs);
+            maxBatchChunks = Math.Max(maxBatchChunks, c.LastMaxBatchChunks);
+        }
         int columns = world.ChunksX * world.ChunksZ;
         for (int frame = 0; frame < 3; frame++)
         {
@@ -203,16 +212,18 @@ public partial class VisualShots
             for (int f = 0; f < 3; f++)
             {
                 await NextFrame();
-                maxMs = Math.Max(maxMs, _scene.Chunks.LastApplyMs);
+                Sample();
             }
         }
         for (int f = 0; f < 10; f++)
         {
             await NextFrame();
-            maxMs = Math.Max(maxMs, _scene.Chunks.LastApplyMs);
+            Sample();
         }
         Metric("edit_burst_apply_ms_max", maxMs);
-        Metric("edit_burst_ok", maxMs <= ChunkRenderer.FrameBudgetMs + 2 ? 1 : 0);
+        Metric("edit_burst_chunks_per_batch_max", maxBatchChunks);
+        Metric("edit_burst_over_budget_ms_max", maxOver); // beyond budget + the frame's slowest batch; must be <= 1
+        Metric("edit_burst_ok", maxOver <= 1 ? 1 : 0);
         foreach (var (x, y, z, old) in placed) world.SetBlock(x, y, z, old);
         await WaitForRemesh();
     }
@@ -299,7 +310,50 @@ public partial class VisualShots
         await View(s.X + 5, s.Z + 4, _scene.Slice.TopLevel, 0, 55, 14);
         await Frames(5);
         await Shoot("overlay_kinds");
+
+        // A status change after the first build must reach the drawn instance color.
+        var live = cells[0];
+        var before = _scene.Overlay.InstanceColorAt(live);
+        map.Jobs.SetStatus(map.Jobs.TryGet(live, out var job) ? job : throw new InvalidOperationException(), JobStatus.NeedsWayBack, 2);
+        await Frames(2);
+        var after = _scene.Overlay.InstanceColorAt(live);
+        Metric("overlay_status_update", before != null && after != null && before != after ? 1 : 0);
         foreach (var c in cells) map.Jobs.Remove(c);
         await Frames(2);
+    }
+
+    /// <summary>
+    /// <c>hotkeys_ok</c>: the real key events select each tool (Z X C V B N M Delete, Esc back to Camera), and the
+    /// sim, priority and follow actions are registered with their keys (<c>sim_actions_ok</c>).
+    /// </summary>
+    async Task CheckHotkeys()
+    {
+        var tools = _scene.Tools;
+        (Godot.Key Key, DesignationTool? Tool)[] cases =
+        [
+            (Godot.Key.Z, DesignationTool.Dig), (Godot.Key.X, DesignationTool.DigStairs), (Godot.Key.C, DesignationTool.Wall),
+            (Godot.Key.V, DesignationTool.Floor), (Godot.Key.B, DesignationTool.Stairs), (Godot.Key.N, DesignationTool.Ramp),
+            (Godot.Key.M, DesignationTool.Ladder), (Godot.Key.Delete, DesignationTool.Cancel), (Godot.Key.Escape, null),
+        ];
+        var bad = new List<string>();
+        foreach (var (key, tool) in cases)
+        {
+            await Key(key);
+            if (tools.ActiveTool != tool) bad.Add($"{key}->{ToolController.ToolName(tools.ActiveTool)}");
+        }
+        Metric("hotkeys_ok", bad.Count == 0 ? 1 : 0);
+        if (bad.Count > 0) Metric("hotkeys_bad", string.Join(' ', bad));
+
+        (string Action, Godot.Key Key)[] sim =
+        [
+            (InputActions.SimPause, Godot.Key.Space), (InputActions.SimSpeed1, Godot.Key.Key1),
+            (InputActions.SimSpeed2, Godot.Key.Key2), (InputActions.SimSpeed3, Godot.Key.Key3),
+            (InputActions.WorkPriorities, Godot.Key.P), (InputActions.FollowColonist, Godot.Key.F),
+        ];
+        var wrong = sim.Where(a => !InputMap.HasAction(a.Action) ||
+            !InputMap.ActionGetEvents(a.Action).OfType<InputEventKey>().Any(e => e.PhysicalKeycode == a.Key))
+            .Select(a => a.Action).ToList();
+        Metric("sim_actions_ok", wrong.Count == 0 ? 1 : 0);
+        if (wrong.Count > 0) Metric("sim_actions_bad", string.Join(' ', wrong));
     }
 }

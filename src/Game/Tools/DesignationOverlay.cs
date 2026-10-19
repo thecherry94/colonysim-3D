@@ -17,6 +17,10 @@ public partial class DesignationOverlay : Node3D
     const int FloatsPerInstance = 16;
     const int MinCapacity = 64;
     const float UnreachableBrightness = 0.5f;
+    // Job cubes: the material's alpha times the instance alpha. Normal jobs get half (= Alpha); a NeedsWayBack job
+    // gets the full material alpha so its hot pink stands out from every kind color and the Cancel preview.
+    const float JobMaterialAlpha = Alpha * 2;
+    const float NormalInstanceAlpha = 0.5f;
 
     static readonly Color DigColor = Color.FromHtml("#ffd23f");
     static readonly Color WallColor = Color.FromHtml("#4aa3ff");
@@ -26,7 +30,7 @@ public partial class DesignationOverlay : Node3D
     static readonly Color LadderColor = Color.FromHtml("#c8d6e5");
     static readonly Color CarveColor = Color.FromHtml("#f368e0");
     static readonly Color CancelColor = Color.FromHtml("#ff5a5a");
-    static readonly Color NeedsWayBackColor = Color.FromHtml("#ff5a5a");
+    static readonly Color NeedsWayBackColor = Color.FromHtml("#ff2d95");
 
     /// <summary>One MultiMesh of cubes; its buffer only grows or shrinks by powers of two.</summary>
     sealed class Layer
@@ -55,7 +59,7 @@ public partial class DesignationOverlay : Node3D
             Buffer[o + 0] = 1; Buffer[o + 1] = 0; Buffer[o + 2] = 0; Buffer[o + 3] = p.X + 0.5f;
             Buffer[o + 4] = 0; Buffer[o + 5] = 1; Buffer[o + 6] = 0; Buffer[o + 7] = p.Y + 0.5f;
             Buffer[o + 8] = 0; Buffer[o + 9] = 0; Buffer[o + 10] = 1; Buffer[o + 11] = p.Z + 0.5f;
-            Buffer[o + 12] = color.R; Buffer[o + 13] = color.G; Buffer[o + 14] = color.B; Buffer[o + 15] = 1;
+            Buffer[o + 12] = color.R; Buffer[o + 13] = color.G; Buffer[o + 14] = color.B; Buffer[o + 15] = color.A;
         }
 
         public void End()
@@ -79,7 +83,7 @@ public partial class DesignationOverlay : Node3D
     {
         _map = map;
         _cube = new BoxMesh { Size = Vector3.One * CubeSize };
-        _jobMaterial = CreateMaterial(Colors.White);
+        _jobMaterial = CreateMaterial(Colors.White, JobMaterialAlpha);
         // Jobs already queued (a loaded save) draw too; later changes come through ConsumeChangedChunks.
         foreach (var job in map.Jobs.All) _changed.Add(JobQueue.ChunkOf(job.Position));
         _preview = CreateLayer("Preview", new Aabb(Vector3.Zero, new Vector3(map.World.SizeX, map.World.SizeY, map.World.SizeZ)),
@@ -87,6 +91,19 @@ public partial class DesignationOverlay : Node3D
     }
 
     public override void _Process(double delta) => Refresh();
+
+    /// <summary>The color currently stored for the job cube at <paramref name="cell"/> (for the harness), if drawn.</summary>
+    public Color? InstanceColorAt(Int3 cell)
+    {
+        if (!_chunks.TryGetValue(JobQueue.ChunkOf(cell), out var layer)) return null;
+        for (int i = 0; i < layer.Count; i++)
+        {
+            int o = i * FloatsPerInstance;
+            if (layer.Buffer[o + 3] == cell.X + 0.5f && layer.Buffer[o + 7] == cell.Y + 0.5f && layer.Buffer[o + 11] == cell.Z + 0.5f)
+                return new Color(layer.Buffer[o + 12], layer.Buffer[o + 13], layer.Buffer[o + 14], layer.Buffer[o + 15]);
+        }
+        return null;
+    }
 
     /// <summary>Rebuilds the chunks whose jobs changed since the last call.</summary>
     public void Refresh()
@@ -108,7 +125,7 @@ public partial class DesignationOverlay : Node3D
         }
         if (!_chunks.TryGetValue(chunk, out var layer))
         {
-            const int s = JobChunkSize;
+            const int s = JobQueue.ChunkSize;
             _chunks[chunk] = layer = CreateLayer($"Jobs_{chunk.X}_{chunk.Y}_{chunk.Z}",
                 new Aabb(new Vector3(chunk.X * s - 1, chunk.Y * s - 1, chunk.Z * s - 1), Vector3.One * (s + 2)), _jobMaterial);
         }
@@ -131,12 +148,10 @@ public partial class DesignationOverlay : Node3D
         _preview.End();
     }
 
-    const int JobChunkSize = 32;
-
-    ShaderMaterial CreateMaterial(Color color)
+    ShaderMaterial CreateMaterial(Color color, float alpha = Alpha)
     {
         var material = new ShaderMaterial { Shader = GD.Load<Shader>("res://assets/shaders/overlay.gdshader") };
-        material.SetShaderParameter("color", WithAlpha(color));
+        material.SetShaderParameter("color", new Color(color, alpha));
         return material;
     }
 
@@ -162,7 +177,7 @@ public partial class DesignationOverlay : Node3D
 
     static Color WithAlpha(Color c) => new(c, Alpha);
 
-    /// <summary>The instance color (linear, as the shader multiplies it in): the kind's color, dimmed or red by status.</summary>
+    /// <summary>The instance color (linear, as the shader multiplies it in): the kind's color, dimmed or hot pink by status.</summary>
     static Color JobColor(Job job)
     {
         var c = job.Status switch
@@ -171,7 +186,9 @@ public partial class DesignationOverlay : Node3D
             JobStatus.Unreachable => Dim(KindColor(job.Kind)),
             _ => KindColor(job.Kind),
         };
-        return c.SrgbToLinear();
+        var linear = c.SrgbToLinear();
+        linear.A = job.Status == JobStatus.NeedsWayBack ? 1 : NormalInstanceAlpha;
+        return linear;
     }
 
     static Color Dim(Color c) => new(c.R * UnreachableBrightness, c.G * UnreachableBrightness, c.B * UnreachableBrightness);

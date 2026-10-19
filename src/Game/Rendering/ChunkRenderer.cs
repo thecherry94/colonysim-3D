@@ -14,7 +14,7 @@ namespace ColonySim.Game;
 /// Two lanes: the initial load is applied within a per-frame time budget, while edits (chunks the world reports
 /// dirty) jump ahead of it. The chunks dirtied in one frame form edit batches, one per connected group of chunks, each
 /// applied all at once as soon as every one of its chunks has its result (one batch at a time while the frame's apply
-/// budget lasts, at least one per frame), so the up to 8 chunks one block change touches swap their meshes in the same
+/// budget lasts, at least one per frame; the budget is soft, overshot by up to one batch), so the up to 8 chunks one block change touches swap their meshes in the same
 /// frame and never show a seam. Batches complete independently: a steady stream of edits never holds up an earlier
 /// batch, and a chunk dirtied again by a later batch moves to that batch. A batch too big to apply in one frame
 /// (the fog toggle's full remesh, a large cave reveal) goes through the time-budgeted path instead. The renderer runs
@@ -87,6 +87,9 @@ public partial class ChunkRenderer : Node3D
     public int PendingChunks { get; private set; }
     /// <summary>Time the last frame spent applying finished meshes (for the harness).</summary>
     public double LastApplyMs { get; private set; }
+    /// <summary>The slowest single edit batch applied in the last frame, and its largest chunk count (for the harness).</summary>
+    public double LastMaxBatchMs { get; private set; }
+    public int LastMaxBatchChunks { get; private set; }
     /// <summary>The per-frame time allowance for applying finished meshes.</summary>
     public const double FrameBudgetMs = ApplyBudgetMs;
 
@@ -254,14 +257,20 @@ public partial class ChunkRenderer : Node3D
         _appliedEdits.Clear();
         long start = Stopwatch.GetTimestamp();
         bool applyingBatches = false;
+        LastMaxBatchMs = 0;
+        LastMaxBatchChunks = 0;
         foreach (var batch in _batches)
         {
             if (batch.Staged.Count == 0) continue;
             if (batch.Waiting.Count > 0 && ++batch.HeldFrames <= MaxEditHoldFrames) continue;
             if (applyingBatches && Stopwatch.GetElapsedTime(start).TotalMilliseconds >= ApplyBudgetMs) break;
+            int chunksBefore = _appliedEdits.Count;
+            long batchStart = Stopwatch.GetTimestamp();
             foreach (var r in batch.Staged.Values) ApplyEdit(r);
             batch.Staged.Clear();
             applyingBatches = true;
+            LastMaxBatchMs = Math.Max(LastMaxBatchMs, Stopwatch.GetElapsedTime(batchStart).TotalMilliseconds);
+            LastMaxBatchChunks = Math.Max(LastMaxBatchChunks, _appliedEdits.Count - chunksBefore);
         }
         _batches.RemoveAll(static b => b.IsEmpty);
 

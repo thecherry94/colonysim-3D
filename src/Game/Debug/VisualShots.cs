@@ -107,6 +107,7 @@ public partial class VisualShots : Node
             (null, MeasureEditStream),
             (null, MeasureEditBurst),
             (null, MeasureOverlayIncremental),
+            (null, CheckHotkeys),
             (null, () => CheckDragSafety(house)),
             (null, () => ShowOverlayKinds(house)),
             ("cave_hidden", () => FindHiddenCave(house)),

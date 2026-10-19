@@ -32,3 +32,6 @@ bin/
 obj/
 *.user
 tests/visual/shots/
+
+# Screenshot harness output
+tests/visual/shots*/

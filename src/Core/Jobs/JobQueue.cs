@@ -5,6 +5,9 @@ public sealed class JobQueue
 {
     const int ChunkShift = 5;
 
+    /// <summary>Edge length of the spatial-index chunks (the same grid as the voxel chunks).</summary>
+    public const int ChunkSize = 1 << ChunkShift;
+
     readonly Dictionary<Int3, Job> _jobs = new();
     readonly Dictionary<long, Job> _byId = new();
     readonly Dictionary<Int3, List<Job>> _chunks = new();
@@ -102,7 +105,9 @@ public sealed class JobQueue
         }
     }
 
-    /// <summary>Appends the chunks whose jobs were added, removed, claimed, released or re-statused since the last call.</summary>
+    /// <summary>
+    /// Single consumer: the Game's DesignationOverlay drains this each frame, so nothing else may call it.
+    /// Appends the chunks whose jobs were added, removed, claimed, released or re-statused since the last call.</summary>
     public void ConsumeChangedChunks(ICollection<Int3> into)
     {
         foreach (var c in _changed) into.Add(c);
