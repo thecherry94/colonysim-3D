@@ -47,4 +47,16 @@ public sealed class MeshBuffers
             Indices.Add(i); Indices.Add(i + 2); Indices.Add(i + 3);
         }
     }
+
+    /// <summary>Adds a triangle whose corners p0..p2 wind clockwise seen from outside.</summary>
+    internal void AddTriangle(Vector3 normal, float layer,
+        Vector3 p0, Vector2 uv0, float ao0, Vector3 p1, Vector2 uv1, float ao1, Vector3 p2, Vector2 uv2, float ao2)
+    {
+        int i = Vertices.Count;
+        Vertices.Add(p0); Vertices.Add(p1); Vertices.Add(p2);
+        Normals.Add(normal); Normals.Add(normal); Normals.Add(normal);
+        Uvs.Add(uv0); Uvs.Add(uv1); Uvs.Add(uv2);
+        Uv2s.Add(new Vector2(layer, ao0)); Uv2s.Add(new Vector2(layer, ao1)); Uv2s.Add(new Vector2(layer, ao2));
+        Indices.Add(i); Indices.Add(i + 1); Indices.Add(i + 2);
+    }
 }

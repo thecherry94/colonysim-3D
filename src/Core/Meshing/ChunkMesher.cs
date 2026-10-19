@@ -21,6 +21,8 @@ public static class ChunkMesher
     static readonly int[] TexTop, TexSide, TexBottom;
     static readonly Facing[] Facings;
     static readonly Face[] Faces;
+    static readonly Face[] SideFaces;                       // indexed by Facing
+    static readonly (Vector3 Min, Vector3 Max)[][] LadderBoxes; // indexed by Facing
 
     /// <summary>One of the six face directions: corners wind clockwise seen from outside.</summary>
     sealed class Face
@@ -56,6 +58,22 @@ public static class ChunkMesher
             MakeFace(2, true, [new(0, 0, 1), new(0, 1, 1), new(1, 1, 1), new(1, 0, 1)]),
             MakeFace(2, false, [new(0, 0, 0), new(1, 0, 0), new(1, 1, 0), new(0, 1, 0)]),
         ];
+        SideFaces = [Faces[5], Faces[0], Faces[4], Faces[1]];
+
+        // Ladder against the north side: two rails and four rungs, rotated for the other facings.
+        (Vector3, Vector3)[] north =
+        [
+            (new(.15f, 0, .02f), new(.25f, 1, .12f)), (new(.75f, 0, .02f), new(.85f, 1, .12f)),
+            .. new[] { .125f, .375f, .625f, .875f }.Select(y => (new Vector3(.25f, y - .03f, .04f), new Vector3(.75f, y + .03f, .10f))),
+        ];
+        LadderBoxes = new (Vector3, Vector3)[4][];
+        for (int f = 0; f < 4; f++)
+            LadderBoxes[f] = north.Select(b =>
+            {
+                Vector3 p = b.Item1, q = b.Item2;
+                for (int r = 0; r < f; r++) { p = new(1 - p.Z, p.Y, p.X); q = new(1 - q.Z, q.Y, q.X); } // a quarter turn clockwise
+                return (Vector3.Min(p, q), Vector3.Max(p, q));
+            }).ToArray();
     }
 
     static Face MakeFace(int axis, bool positive, Vector3[] corners)
@@ -119,6 +137,9 @@ public static class ChunkMesher
                             case BlockShape.Cube: EmitCube(result.Opaque, pad, idx, id, origin); break;
                             case BlockShape.Liquid: EmitLiquid(result.Liquid, pad, idx, id, origin); break;
                             case BlockShape.Stairs: EmitStairs(result.Opaque, pad, idx, id, origin); break;
+                            case BlockShape.Ramp or BlockShape.CornerOuter or BlockShape.CornerInner:
+                                EmitSlope(result.Opaque, pad, idx, id, origin); break;
+                            case BlockShape.Ladder: EmitLadder(result.Opaque, id, origin); break;
                         }
                     }
                 }
@@ -223,5 +244,96 @@ public static class ChunkMesher
         m.AddQuad(f.Normal, Texture(id, f), ao[0] + ao[2] < ao[1] + ao[3],
             origin + p[0], Uv(f.Axis, f.Positive, p[0]), ao[0], origin + p[1], Uv(f.Axis, f.Positive, p[1]), ao[1],
             origin + p[2], Uv(f.Axis, f.Positive, p[2]), ao[2], origin + p[3], Uv(f.Axis, f.Positive, p[3]), ao[3]);
+    }
+
+    /// <summary>
+    /// Ramps and slope corners: a unit cell whose top corners (in top-face order, x/z = 00, 10, 11, 01) are each
+    /// raised to 1 or lowered to 0; the side facing f spans corners f and f + 1. Ramps rise toward their facing; an outer corner raises only the corner between
+    /// its facing and the next side clockwise, an inner corner lowers only the opposite one. Sloped tops are never
+    /// culled; sides, the bottom and an inner corner's flat top cull against occluders.
+    /// </summary>
+    static void EmitSlope(MeshBuffers m, ushort[] pad, int idx, ushort id, Vector3 origin)
+    {
+        int f = (int)Facings[id];
+        Span<bool> high = stackalloc bool[4];
+        int special = -1; // the one corner that differs from the rest (corners only)
+        switch (Shapes[id])
+        {
+            case BlockShape.Ramp: high[f] = high[(f + 1) & 3] = true; break;
+            case BlockShape.CornerOuter: special = (f + 1) & 3; high[special] = true; break;
+            default: special = (f + 3) & 3; high.Fill(true); high[special] = false; break;
+        }
+
+        var top = Faces[2];
+        Span<Vector3> p = stackalloc Vector3[4];
+        Span<float> ao = stackalloc float[4];
+        for (int k = 0; k < 4; k++)
+        {
+            p[k] = origin + top.Corners[k] with { Y = high[k] ? 1 : 0 };
+            ao[k] = CornerAo(pad, idx, top.AoDeltas, k);
+        }
+        var uv = top.CornerUvs;
+        int tex = TexTop[id];
+        if (special < 0)
+            m.AddQuad(SlopeNormal(p[0], p[1], p[2]), tex, ao[0] + ao[2] < ao[1] + ao[3],
+                p[0], uv[0], ao[0], p[1], uv[1], ao[1], p[2], uv[2], ao[2], p[3], uv[3], ao[3]);
+        else
+        {
+            // Split along the diagonal through the special corner's neighbors: the special corner's half slopes,
+            // the other half is flat (at 1 for an inner corner; at 0 for an outer one, where it is the floor and skipped).
+            int a = (special + 3) & 3, s = special, c = (special + 1) & 3, o = (special + 2) & 3;
+            m.AddTriangle(SlopeNormal(p[a], p[s], p[c]), tex, p[a], uv[a], ao[a], p[s], uv[s], ao[s], p[c], uv[c], ao[c]);
+            if (high[o] && !Occludes[pad[idx + top.NeighborDelta]])
+                m.AddTriangle(top.Normal, tex, p[c], uv[c], ao[c], p[o], uv[o], ao[o], p[a], uv[a], ao[a]);
+        }
+
+        EmitBoxFace(m, pad, idx, id, origin, Faces[3], Vector3.Zero, Vector3.One);
+        foreach (var side in SideFaces) EmitSlopeSide(m, pad, idx, id, origin, side, high);
+    }
+
+    /// <summary>Normal of a triangle wound clockwise seen from outside.</summary>
+    static Vector3 SlopeNormal(Vector3 a, Vector3 b, Vector3 c) => Vector3.Normalize(Vector3.Cross(c - a, b - a));
+
+    /// <summary>A side of a slope: the full face minus its top corners that are lowered, so a quad, a triangle or nothing.</summary>
+    static void EmitSlopeSide(MeshBuffers m, ushort[] pad, int idx, ushort id, Vector3 origin, Face f, ReadOnlySpan<bool> high)
+    {
+        Span<int> keep = stackalloc int[4];
+        int n = 0;
+        for (int k = 0; k < 4; k++)
+        {
+            var c = f.Corners[k];
+            if (c.Y == 0 || high[c.X == 0 ? (c.Z == 0 ? 0 : 3) : (c.Z == 0 ? 1 : 2)]) keep[n++] = k;
+        }
+        if (n < 3 || Occludes[pad[idx + f.NeighborDelta]]) return;
+
+        // Every kept point is a corner of the full face, so the full face's bilinear AO is just its corner AO.
+        Span<float> ao = stackalloc float[4];
+        for (int k = 0; k < 4; k++) ao[k] = CornerAo(pad, idx, f.AoDeltas, k);
+        var cs = f.Corners; var uv = f.CornerUvs;
+        int tex = Texture(id, f);
+        if (n == 4)
+            m.AddQuad(f.Normal, tex, ao[0] + ao[2] < ao[1] + ao[3],
+                origin + cs[0], uv[0], ao[0], origin + cs[1], uv[1], ao[1], origin + cs[2], uv[2], ao[2], origin + cs[3], uv[3], ao[3]);
+        else
+        {
+            int i = keep[0], j = keep[1], k = keep[2]; // a subsequence of the clockwise corners stays clockwise
+            m.AddTriangle(f.Normal, tex,
+                origin + cs[i], uv[i], ao[i], origin + cs[j], uv[j], ao[j], origin + cs[k], uv[k], ao[k]);
+        }
+    }
+
+    /// <summary>Ladder: rails and rungs against the facing side of the cell. Every face is drawn, unoccluded, with the side texture.</summary>
+    static void EmitLadder(MeshBuffers m, ushort id, Vector3 origin)
+    {
+        int tex = TexSide[id];
+        foreach (var (min, max) in LadderBoxes[(int)Facings[id]])
+            foreach (var f in Faces)
+            {
+                var c = f.Corners;
+                Vector3 p0 = min + c[0] * (max - min), p1 = min + c[1] * (max - min), p2 = min + c[2] * (max - min), p3 = min + c[3] * (max - min);
+                m.AddQuad(f.Normal, tex, false,
+                    origin + p0, Uv(f.Axis, f.Positive, p0), 1f, origin + p1, Uv(f.Axis, f.Positive, p1), 1f,
+                    origin + p2, Uv(f.Axis, f.Positive, p2), 1f, origin + p3, Uv(f.Axis, f.Positive, p3), 1f);
+            }
     }
 }

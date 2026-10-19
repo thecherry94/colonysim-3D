@@ -129,6 +129,107 @@ public class MeshingTests
         // Stairs lose slab front-side and upper back faces against the stone (-Z); the stone keeps all 6 faces (stairs never occlude).
         Assert.Equal(9 + 6, Faces(stairs));
     }
+    // --- Ramps, slope corners and ladders: stone at y <= 5, the shape alone at (5,6,5). ---
+
+    static readonly Vector3 ShapeCell = new(5, 6, 5);
+
+    static MeshBuffers MeshShape(ushort id)
+    {
+        var w = TestWorlds.SolidBelow(32, 5); w.SetBlock(5, 6, 5, id); Discovery.InitialFlood(w);
+        return ChunkMesher.Build(V(w), new Int3(0, 0, 0)).Opaque;
+    }
+
+    static IEnumerable<(Vector3 A, Vector3 B, Vector3 C, Vector3 N)> Triangles(MeshBuffers b) =>
+        Enumerable.Range(0, b.Indices.Count / 3).Select(t =>
+            (b.Vertices[b.Indices[t * 3]], b.Vertices[b.Indices[t * 3 + 1]], b.Vertices[b.Indices[t * 3 + 2]], b.Normals[b.Indices[t * 3]]));
+
+    // A triangle belongs to the shape when the solid just behind it lies inside the shape's cell; this excludes the
+    // neighbors' faces that touch the cell, such as the ground's top face underneath.
+    static IEnumerable<(Vector3 A, Vector3 B, Vector3 C, Vector3 N)> ShapeTriangles(MeshBuffers b) => Triangles(b).Where(t =>
+    {
+        var behind = (t.A + t.B + t.C) / 3 - t.N * 1e-3f - ShapeCell;
+        return behind.X > 0 && behind.X < 1 && behind.Y > 0 && behind.Y < 1 && behind.Z > 0 && behind.Z < 1;
+    });
+
+    static int ShapeTris(MeshBuffers b) => ShapeTriangles(b).Count();
+    static IEnumerable<Vector3> ShapeVertices(MeshBuffers b) => ShapeTriangles(b).SelectMany(t => new[] { t.A, t.B, t.C });
+    static int Tris(MeshBuffers b, Vector3 n) => ShapeTriangles(b).Count(t => Vector3.Distance(t.N, n) < 1e-4f);
+
+    /// <summary>Area of the up-facing triangles at height y inside the unit square at (x, z).</summary>
+    static float TopFaceAt(MeshBuffers b, int x, int y, int z) => Triangles(b)
+        .Where(t => t.N == Vector3.UnitY && new[] { t.A, t.B, t.C }.All(p => p.Y == y && p.X >= x && p.X <= x + 1 && p.Z >= z && p.Z <= z + 1))
+        .Sum(t => Vector3.Cross(t.B - t.A, t.C - t.A).Length() / 2);
+
+    [Fact] public void RampNorth_SlopedTopHighSideTwoTrianglesNoBottom()
+    {
+        var b = MeshShape(Blocks.BuiltRamp(BuildMaterial.Stone, Facing.North));
+        Assert.Equal(2, Tris(b, Vector3.Normalize(new Vector3(0, 1, 1))));   // up + toward the low (south) side
+        Assert.Equal(2, Tris(b, -Vector3.UnitZ));                             // high side
+        Assert.Equal(1, Tris(b, Vector3.UnitX)); Assert.Equal(1, Tris(b, -Vector3.UnitX));
+        Assert.Equal(0, Tris(b, -Vector3.UnitY));                             // bottom culled by stone
+        Assert.Equal(6, ShapeTris(b));                                        // and no low side
+    }
+    [Fact] public void CornerOuterNorth_OneSlopedTriangleAndTwoSideTriangles()
+    {
+        var b = MeshShape(Blocks.NaturalSlope(Blocks.Grass, BlockShape.CornerOuter, Facing.North));
+        Assert.Equal(1, Tris(b, -Vector3.UnitZ)); Assert.Equal(1, Tris(b, Vector3.UnitX)); Assert.Equal(3, ShapeTris(b));
+        // the raised corner sits between the north and east sides
+        Assert.Contains(ShapeVertices(b), p => p == new Vector3(6, 7, 5));
+        Assert.All(ShapeVertices(b).Where(p => p.Y == 7), p => Assert.Equal(new Vector3(6, 7, 5), p));
+    }
+    [Fact] public void CornerInnerNorth_EightTriangles()
+    {
+        var b = MeshShape(Blocks.NaturalSlope(Blocks.Grass, BlockShape.CornerInner, Facing.North));
+        Assert.Equal(2, Tris(b, -Vector3.UnitZ)); Assert.Equal(2, Tris(b, Vector3.UnitX)); Assert.Equal(8, ShapeTris(b));
+        Assert.Equal(1, Tris(b, Vector3.UnitY));                              // flat top half
+        // the lowered corner is opposite the north-east one
+        Assert.DoesNotContain(ShapeVertices(b), p => p == new Vector3(5, 7, 6));
+    }
+    [Fact] public void CornerInner_FlatTopCulledByBlockAbove()
+    {
+        var w = TestWorlds.SolidBelow(32, 5); w.SetBlock(5, 6, 5, Blocks.NaturalSlope(Blocks.Grass, BlockShape.CornerInner, Facing.East));
+        w.SetBlock(5, 7, 5, Blocks.Stone); Discovery.InitialFlood(w);
+        var b = ChunkMesher.Build(V(w), new Int3(0, 0, 0)).Opaque;
+        Assert.Equal(0, Tris(b, Vector3.UnitY)); Assert.Equal(7, ShapeTris(b));
+    }
+    [Fact] public void Ladder_SixBoxesAgainstItsWall()
+    {
+        var b = MeshShape(Blocks.Ladder(Facing.East));
+        Assert.Equal(72, ShapeTris(b));
+        Assert.All(ShapeVertices(b), v => Assert.InRange(v.X, 5.85f, 6f));
+        Assert.Equal(5.88f, ShapeVertices(b).Min(v => v.X), 4); Assert.Equal(5.98f, ShapeVertices(b).Max(v => v.X), 4);
+        Assert.All(ShapeTriangles(b), t => Assert.Equal(1f, b.Uv2s[b.Vertices.IndexOf(t.A)].Y));
+    }
+    [Fact] public void Slope_GroundTopFaceUnderneathStillEmitted()
+    {
+        var b = MeshShape(Blocks.BuiltRamp(BuildMaterial.Wood, Facing.East));
+        Assert.Equal(1f, TopFaceAt(b, 5, 6, 5), 4);
+    }
+    [Fact] public void NewShapes_WindClockwise_AndNormalsMatchGeometry()
+    {
+        foreach (var f in new[] { Facing.North, Facing.East, Facing.South, Facing.West })
+        {
+            foreach (var id in new[]
+            {
+                Blocks.BuiltRamp(BuildMaterial.Wood, f), Blocks.NaturalSlope(Blocks.Dirt, BlockShape.CornerOuter, f),
+                Blocks.NaturalSlope(Blocks.Stone, BlockShape.CornerInner, f), Blocks.Ladder(f),
+            })
+            {
+                var tris = ShapeTriangles(MeshShape(id)).ToList();
+                Assert.NotEmpty(tris);
+                foreach (var t in tris)
+                {
+                    var cross = Vector3.Cross(t.B - t.A, t.C - t.A);
+                    Assert.True(Vector3.Dot(cross, t.N) < 0, $"{Blocks.Registry.Get(id).Name}: counter-clockwise triangle");
+                    Assert.True(Vector3.Dot(Vector3.Normalize(cross), t.N) < -0.9999f, $"{Blocks.Registry.Get(id).Name}: normal off the geometry");
+                }
+                // sloped tops face up (their normal comes from the winding, so check it independently)
+                Assert.All(tris.Where(t => Math.Abs(t.N.Y) is > 0 and < 1), t => Assert.True(t.N.Y > 0));
+            }
+            var low = f.Opposite().Offset();
+            Assert.Equal(2, Tris(MeshShape(Blocks.BuiltRamp(BuildMaterial.Stone, f)), Vector3.Normalize(new Vector3(low.X, 1, low.Z))));
+        }
+    }
     [Fact] public void Cap_WaterUnderWaterOrSolid_GoesToLiquid()
     {
         var w = TestWorlds.SolidBelow(32, 60); w.SetBlock(3, 40, 3, Blocks.Water, false); w.SetBlock(4, 40, 4, Blocks.Water, false); w.SetBlock(4, 41, 4, Blocks.Water, false);
