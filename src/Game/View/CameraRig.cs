@@ -5,7 +5,8 @@ namespace ColonySim.Game;
 
 /// <summary>
 /// RTS overseer camera: orbits a focus point on the map. Keys pan/rotate, wheel zooms, right-drag orbits,
-/// middle-drag pans. Shift+wheel is left to the view-level controls; left button is left to the tools.
+/// middle-drag pans. Shift+wheel is left to the view-level controls; left button is left to the tools. <see cref="Follow"/>
+/// makes the focus track a point every frame until the player pans or moves the focus.
 /// </summary>
 public partial class CameraRig : Node3D
 {
@@ -20,12 +21,16 @@ public partial class CameraRig : Node3D
     float _focusX, _focusZ, _targetY;
     int _slicedLevel;
     bool _sliced;
+    Func<Vector3>? _follow;
     float _yaw, _pitch = DefaultPitch, _distance = DefaultDistance;
 
     public Camera3D Camera { get; private set; } = null!;
 
     /// <summary>Smoothed vertical focus; eases toward the target set by <see cref="FocusOnLevel"/>.</summary>
     public float FocusY { get; set; }
+
+    /// <summary>Whether the focus is tracking a <see cref="Follow"/> target.</summary>
+    public bool IsFollowing => _follow != null;
 
     public Vector3 FocusPoint => new(_focusX, FocusY, _focusZ);
 
@@ -54,9 +59,16 @@ public partial class CameraRig : Node3D
         UpdateTransform();
     }
 
-    /// <summary>Moves the focus to map column (x, z), clamped to the map; the height keeps following its target.</summary>
+    /// <summary>
+    /// The focus tracks <paramref name="target"/> (horizontally; the height keeps easing to its level) every frame. Panning
+    /// with WASD or the middle mouse button, <see cref="SetFocus"/> and <c>Follow(null)</c> stop it.
+    /// </summary>
+    public void Follow(Func<Vector3>? target) => _follow = target;
+
+    /// <summary>Moves the focus to map column (x, z), clamped to the map; the height keeps following its target. Stops following.</summary>
     public void SetFocus(float x, float z)
     {
+        _follow = null;
         _focusX = Mathf.Clamp(x, 0, _map.World.SizeX);
         _focusZ = Mathf.Clamp(z, 0, _map.World.SizeZ);
         UpdateTargetY();
@@ -92,6 +104,7 @@ public partial class CameraRig : Node3D
 
     void MoveFocus(Vector2 delta)
     {
+        _follow = null;
         _focusX = Mathf.Clamp(_focusX + delta.X, 0, _map.World.SizeX);
         _focusZ = Mathf.Clamp(_focusZ + delta.Y, 0, _map.World.SizeZ);
     }
@@ -114,6 +127,13 @@ public partial class CameraRig : Node3D
         if (keys && Input.IsActionPressed(InputActions.CamRotLeft)) rot += 1;
         if (keys && Input.IsActionPressed(InputActions.CamRotRight)) rot -= 1;
         if (rot != 0) _yaw = Mathf.Wrap(_yaw + rot * RotateKeyDegPerSec * dt, 0, 360);
+
+        if (_follow != null)
+        {
+            var p = _follow();
+            _focusX = Mathf.Clamp(p.X, 0, _map.World.SizeX);
+            _focusZ = Mathf.Clamp(p.Z, 0, _map.World.SizeZ);
+        }
 
         UpdateTargetY();
         FocusY = Mathf.Lerp(FocusY, _targetY, 1 - Mathf.Exp(-FocusYSmoothing * dt));

@@ -9,6 +9,7 @@ namespace ColonySim.Game;
 /// a level step mid-drag (PgUp/PgDn, Shift+wheel) stretches it into a 3D box one level per step from the level the
 /// drag started on; release applies it, Esc cancels. A drag started in a slice takes the view level along with the
 /// box; a drag started unsliced leaves the view at the top. Home is ignored mid-drag. With the Camera tool, a
+/// click selects the colonist under the cursor (empty ground clears the selection) and a
 /// double-click jumps the view to the clicked block's level. Right and middle buttons stay with the camera.
 /// </summary>
 public partial class ToolController : Node3D
@@ -168,7 +169,7 @@ public partial class ToolController : Node3D
         {
             _mouse = press.Position;
             _mouseOverWorld = true;
-            if (_tool == null) { if (press.DoubleClick) JumpToClickedLevel(); }
+            if (_tool == null) ClickWithCamera(press.DoubleClick);
             else StartDrag();
             GetViewport().SetInputAsHandled();
             return;
@@ -222,6 +223,31 @@ public partial class ToolController : Node3D
         var camera = _scene.Rig.Camera;
         return VoxelRaycast.Cast(_map.View, ToNumerics(camera.ProjectRayOrigin(screen)),
             ToNumerics(camera.ProjectRayNormal(screen)), RayLength, _scene.Slice.ViewLevel, out hit);
+    }
+
+    /// <summary>A colonist under the cursor is selected, else the selection clears; a double-click on a block also jumps the view.</summary>
+    void ClickWithCamera(bool doubleClick)
+    {
+        var colonist = PickColonist(_mouse);
+        _scene.Selected = colonist;
+        if (colonist == null && doubleClick) JumpToClickedLevel();
+    }
+
+    /// <summary>The visible colonist under <paramref name="screen"/>, unless terrain is in front of it.</summary>
+    Colonist? PickColonist(Vector2 screen)
+    {
+        var colonists = _map.Colony.Colonists;
+        if (colonists.Count == 0) return null;
+        var camera = _scene.Rig.Camera;
+        var origin = ToNumerics(camera.ProjectRayOrigin(screen));
+        var dir = ToNumerics(camera.ProjectRayNormal(screen));
+        float reach = Raycast(screen, out var hit) ? NVector3.Distance(origin, hit.Point) : RayLength;
+        var renderer = _scene.ColonistRenderer;
+        var candidates = new List<(int Id, NVector3 Feet)>();
+        foreach (var c in colonists)
+            if (renderer.IsVisible(c)) candidates.Add((c.Id, ToNumerics(renderer.RenderPosition(c))));
+        int id = ColonistPicking.Pick(origin, dir, candidates, reach);
+        return id == 0 ? null : colonists.Find(c => c.Id == id);
     }
 
     void JumpToClickedLevel()
@@ -285,7 +311,7 @@ public partial class ToolController : Node3D
 
     static string ToolHint(DesignationTool? tool) => tool switch
     {
-        null => "Camera: right-drag orbits, middle-drag pans, double-click a block to jump to its level.",
+        null => "Camera: click a colonist to select it, right-drag orbits, middle-drag pans, double-click a block to jump to its level.",
         DesignationTool.Dig => "Dig: drag over blocks. Hold the mouse and press PgDn to dig several levels deep.",
         DesignationTool.Wall => "Wall: drag a rectangle to build walls around its outline. Hold and press PgUp for taller walls.",
         DesignationTool.Floor => "Floor: drag to fill a rectangle with floor. Go up a level to put a floor on top of walls.",

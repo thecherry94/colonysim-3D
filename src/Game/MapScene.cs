@@ -29,6 +29,44 @@ public partial class MapScene : Node3D
     public Hud Hud { get; private set; } = null!;
     public DebugOverlay DebugOverlay { get; private set; } = null!;
 
+    /// <summary>The selected colonist (shown in the info panel), or null.</summary>
+    public Colonist? Selected
+    {
+        get => _selected;
+        set
+        {
+            if (_selected == value) return;
+            bool following = Following;
+            _selected = value;
+            // Following continues with the newly selected colonist, and ends with the selection.
+            Following = following && value != null;
+            SelectionChanged?.Invoke();
+        }
+    }
+
+    public event Action? SelectionChanged;
+
+    /// <summary>Whether the camera follows the selected colonist (and the view level its floor, when sliced).</summary>
+    public bool Following
+    {
+        get => Rig.IsFollowing;
+        set
+        {
+            if (value && _selected is { } c)
+            {
+                Rig.Follow(() => ColonistRenderer.RenderPosition(c));
+                Slice.FollowFeetY = () => c.Cell.Y;
+            }
+            else
+            {
+                Rig.Follow(null);
+                Slice.FollowFeetY = null;
+            }
+        }
+    }
+
+    Colonist? _selected;
+
     /// <summary>How long the fallback generation took, or null when the map came from <see cref="GameSession"/>.</summary>
     public double? GenerateMs { get; private set; }
 
@@ -129,6 +167,13 @@ public partial class MapScene : Node3D
             visualShots.Setup(this, shotsDir);
             AddChild(visualShots);
         }
+    }
+
+    public override void _UnhandledInput(InputEvent @event)
+    {
+        if (!@event.IsActionPressed(InputActions.FollowColonist)) return;
+        if (_selected != null) Following = !Following;
+        GetViewport().SetInputAsHandled();
     }
 
     static MapSize ParseSize(string value) =>

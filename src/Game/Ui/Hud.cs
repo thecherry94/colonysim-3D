@@ -7,7 +7,8 @@ namespace ColonySim.Game;
 /// In-game HUD: the view-level indicator, the debug view toggles, Save (also Ctrl+S) and Menu with their messages
 /// (top left), the tool status line (bottom center) and the toolbar (bottom): time controls with the day, tools, build material, debug instant work
 /// and the queued job count. Menu asks first when blocks or jobs changed since the map was saved, loaded or generated. HUD buttons never take keyboard focus, so Tab, Esc and the number keys always reach
-/// the tools.
+/// the tools. The colonist UI lives here too: the bar (top center), the selected colonist's panel (bottom left), the
+/// work priorities window and, in the top left under the level indicator, the bookmarks.
 /// </summary>
 public partial class Hud : CanvasLayer
 {
@@ -46,6 +47,12 @@ public partial class Hud : CanvasLayer
 
     public void Setup(MapScene scene) => _scene = scene;
 
+    /// <summary>The colonist UI, exposed for the screenshot harness.</summary>
+    internal ColonistBar ColonistBar { get; private set; } = null!;
+    internal ColonistPanel ColonistPanel { get; private set; } = null!;
+    internal WorkPrioritiesWindow WorkPriorities { get; private set; } = null!;
+    internal BookmarksPanel Bookmarks { get; private set; } = null!;
+
     /// <summary>Returns to the new-game screen; exposed for the screenshot harness.</summary>
     internal Button MenuButton { get; private set; } = null!;
 
@@ -62,6 +69,15 @@ public partial class Hud : CanvasLayer
     {
         AddChild(BuildTopLeft());
         AddChild(BuildBottom());
+        ColonistBar = new ColonistBar();
+        ColonistBar.Setup(_scene, () => WorkPriorities.Toggle());
+        AddChild(ColonistBar);
+        ColonistPanel = new ColonistPanel();
+        ColonistPanel.Setup(_scene);
+        AddChild(ColonistPanel);
+        WorkPriorities = new WorkPrioritiesWindow();
+        WorkPriorities.Setup(_scene);
+        AddChild(WorkPriorities);
         AddChild(BuildLeaveDialog());
         // The scene starts on a freshly generated or loaded map: nothing to save yet.
         _savedVersion = CurrentVersion();
@@ -171,6 +187,9 @@ public partial class Hud : CanvasLayer
         box.AddThemeConstantOverride("separation", 4);
         _level = Text("Level", 15, TextColor);
         box.AddChild(_level);
+        Bookmarks = new BookmarksPanel();
+        Bookmarks.Setup(_scene);
+        box.AddChild(Bookmarks);
         _caps = Toggle("Cut caps", on => _scene.Slice.CapsEnabled = on);
         _fog = Toggle("Fog of war", on => _scene.Slice.FogEnabled = on);
         box.AddChild(_caps);
@@ -322,7 +341,7 @@ public partial class Hud : CanvasLayer
         return box;
     }
 
-    static Button ActionButton(string text, Action onPressed)
+    internal static Button ActionButton(string text, Action onPressed)
     {
         var button = new Button { Text = text, FocusMode = Control.FocusModeEnum.None };
         button.AddThemeFontSizeOverride("font_size", 13);
@@ -331,7 +350,7 @@ public partial class Hud : CanvasLayer
         return button;
     }
 
-    static Button ToggleButton(string text, ButtonGroup? group)
+    internal static Button ToggleButton(string text, ButtonGroup? group)
     {
         var button = new Button { Text = text, ToggleMode = true, ButtonGroup = group, FocusMode = Control.FocusModeEnum.None };
         button.AddThemeFontSizeOverride("font_size", 13);
@@ -352,7 +371,7 @@ public partial class Hud : CanvasLayer
         button.AddThemeColorOverride("font_hover_pressed_color", activeText);
     }
 
-    static StyleBoxFlat Box(Color bg, Color border, int radius, int marginX, int marginY) => new()
+    internal static StyleBoxFlat Box(Color bg, Color border, int radius, int marginX, int marginY) => new()
     {
         BgColor = bg,
         BorderColor = border,

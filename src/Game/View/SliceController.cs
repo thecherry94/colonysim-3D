@@ -9,7 +9,8 @@ namespace ColonySim.Game;
 /// <c>slice_height</c>, chunks entirely above it are hidden, and solid blocks the cut passes through get caps.
 /// PgUp/PgDn and Shift+wheel step one level (the first step down from the top lands on the ground at the camera
 /// focus), Home returns to the top (nothing hidden). While a tool drag is in progress the tool controller takes these
-/// inputs first (see <see cref="ToolController"/>).
+/// inputs first (see <see cref="ToolController"/>). While the camera follows a colonist (<see cref="FollowFeetY"/>) in
+/// a slice, the view level tracks the floor it stands on.
 /// </summary>
 public partial class SliceController : Node
 {
@@ -23,9 +24,13 @@ public partial class SliceController : Node
     CameraRig _camera = null!;
     bool _capsEnabled = true;
     readonly HashSet<(int, int)> _dirtyColumns = new();
+    int _followedY = int.MinValue;
 
     /// <summary>The highest block Y still drawn. At <see cref="TopLevel"/> nothing is hidden.</summary>
     public int ViewLevel { get; private set; } = VoxelWorld.Height - 1;
+
+    /// <summary>The followed colonist's feet cell y, set by the map scene; consulted only while the camera follows.</summary>
+    public Func<int>? FollowFeetY { get; set; }
 
     public int TopLevel => VoxelWorld.Height - 1;
 
@@ -83,6 +88,21 @@ public partial class SliceController : Node
         _camera.FocusOnLevel(ViewLevel, sliced);
 
         LastLevelChangeMs = (float)Stopwatch.GetElapsedTime(start).TotalMilliseconds;
+    }
+
+    /// <summary>Following in a slice, a change of the colonist's floor moves the view level to it (and nothing else does).</summary>
+    public override void _Process(double delta)
+    {
+        if (_map == null || FollowFeetY == null || !_camera.IsFollowing)
+        {
+            _followedY = int.MinValue; // the next follow starts by snapping to its colonist
+            return;
+        }
+        if (!IsSliced) return;
+        int y = FollowFeetY();
+        if (y == _followedY) return;
+        _followedY = y;
+        if (y - 1 != ViewLevel) SetLevel(y - 1);
     }
 
     /// <summary>One level up (+1) or down (-1); see <see cref="ToolTargeting.StepLevel"/>.</summary>
