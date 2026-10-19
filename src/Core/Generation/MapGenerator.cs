@@ -2,7 +2,7 @@ namespace ColonySim.Core;
 
 public readonly record struct GenerationProgress(string Stage, float Fraction);
 
-/// <summary>Full map generation: height field, ground and water, caves, ores, trees, slopes, then the initial discovery flood.</summary>
+/// <summary>Full map generation: height field, ground and water, caves, ores, trees, slopes, the initial discovery flood, then the colonists' arrival.</summary>
 public static class MapGenerator
 {
     public static ColonyMap Generate(MapSettings s, IProgress<GenerationProgress>? progress = null, CancellationToken ct = default)
@@ -43,7 +43,11 @@ public static class MapGenerator
         progress?.Report(new("Exploring", 0.7f));
         Discovery.InitialFlood(world);
 
+        progress?.Report(new("Arriving", 0.9f));
+        var map = new ColonyMap(s, world, site: site);
+        ColonistFactory.SpawnStarting(map);
+
         progress?.Report(new("Done", 1f));
-        return new ColonyMap(s, world, site: site);
+        return map;
     }
 }

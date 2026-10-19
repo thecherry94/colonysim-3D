@@ -106,8 +106,16 @@ public sealed class Navigation
     /// <summary>The section's links, one per neighbouring section (the cheapest move to it), ordered by <see cref="SectionLink.ToSection"/>.</summary>
     public IReadOnlyList<SectionLink> SectionLinks(int section) => _links[section];
 
-    /// <summary>The component of the standable cell nearest <paramref name="anchor"/> (within 8), or -1 if there is none.</summary>
-    public int HomeComponent(Int3 anchor) => Rules.FindStandableNear(anchor, 8, out var c) ? ComponentOf(c) : -1;
+    /// <summary>
+    /// The component of the standable cell nearest <paramref name="anchor"/> (within 8), or -1 if there is none. The
+    /// search reads the live world, so pending edits are applied first (<see cref="Update"/>) to answer from sections
+    /// that match it.
+    /// </summary>
+    public int HomeComponent(Int3 anchor)
+    {
+        Update();
+        return Rules.FindStandableNear(anchor, 8, out var c) ? ComponentOf(c) : -1;
+    }
 
     /// <summary>
     /// Rebuilds every chunk dirtied since the last call and re-derives the links of their neighbours; then, if any

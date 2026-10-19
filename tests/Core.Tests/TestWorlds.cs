@@ -17,12 +17,12 @@ public static class TestWorlds
         return w;
     }
 
-    /// <summary>Flat world with initial discovery flood, wrapped in a ColonyMap.</summary>
+    /// <summary>Flat world with initial discovery flood, wrapped in a ColonyMap whose start site (home) is the middle column.</summary>
     public static ColonyMap FlatMap(int size = 64, int surface = 150)
     {
         var world = SolidBelow(size, surface);
         Discovery.InitialFlood(world);
-        return new ColonyMap(new MapSettings(1, size, size, new TerrainParams()), world);
+        return new ColonyMap(new MapSettings(1, size, size, new TerrainParams()), world, site: new StartSite(size / 2, size / 2, surface + 1));
     }
 
     /// <summary>Sets a cell to air and reveals it, as digging does; air carved below the surface without a reveal reads as solid.</summary>
