@@ -111,6 +111,17 @@ public partial class VisualShots
         Metric("debug_overlay", string.Join(' ', states));
     }
 
+    /// <summary>
+    /// What a save keeps of the colony that the simulation doesn't change on its own: site, home, colonists' identity,
+    /// skill levels and priorities, bookmarks (positions, xp and job progress move while the sim runs).
+    /// </summary>
+    static string ColonyKey(ColonyMap map)
+    {
+        var c = map.Colony;
+        var colonists = c.Colonists.Select(x => $"{x.Id}:{x.Name}:{x.ShirtColor}:{string.Join(',', x.Skills.Select(s => s.Level))}:{string.Join(',', x.Priorities)}");
+        return $"{map.StartSite}|{c.Home}|{c.NextColonistId}|{string.Join(';', colonists)}|{string.Join(';', c.Bookmarks)}";
+    }
+
     static string OnOff(bool on) => on ? "on" : "off";
 
     /// <summary>
@@ -163,6 +174,10 @@ public partial class VisualShots
         Designator.Apply(map, DesignationTool.Dig, BuildMaterial.Wood, new DragBox(new(site.X, site.H, site.Z), new(site.X + 3, site.H - 2, site.Z + 3)));
         await View(site.X + 2, site.Z + 2, _scene.Slice.TopLevel, 30, 50, 40);
         var before = await Task.Run(() => Fingerprint.Of(map));
+        map.Colony.Bookmarks.Add(new ViewBookmark("Harness", _scene.Slice.ViewLevel));
+        map.Colony.Colonists[0].Priorities[0] = 1;
+        map.MarkColonyChanged();
+        string colonyBefore = ColonyKey(map);
         await CheckLeaveDialog();
 
         Input.ParseInputEvent(new InputEventKey { PhysicalKeycode = Godot.Key.S, Keycode = Godot.Key.S, CtrlPressed = true, Pressed = true });
@@ -177,7 +192,7 @@ public partial class VisualShots
         await Shoot("hud_saved");
 
         string corruptPath = Path.Combine(ProjectSettings.GlobalizePath(SaveGames.Dir), CorruptSave);
-        File.WriteAllBytes(corruptPath, [.. "CSIM"u8, 1, 0, 0, 0, .. "not a brotli stream"u8]);
+        File.WriteAllBytes(corruptPath, [.. "CSIM"u8, (byte)MapSerializer.FormatVersion, 0, 0, 0, .. "not a brotli stream"u8]);
         try
         {
             var menu = await OpenMenu();
@@ -192,6 +207,8 @@ public partial class VisualShots
             Select(menu, FindSave(menu, saveFile));
             menu.LoadButton.EmitSignal(BaseButton.SignalName.Pressed);
             _scene = await WaitForMapScene();
+            string colonyAfter = ColonyKey(_scene.Map);
+            Metric("save_roundtrip_colonists", colonyBefore == colonyAfter && _scene.Map.Colony.Colonists.Count > 0 ? "1" : "0");
             await Frames(SettleFrames);
             var after = await Task.Run(() => Fingerprint.Of(_scene.Map));
             Metric("menu_roundtrip_equal", before == after ? "true" : "false");

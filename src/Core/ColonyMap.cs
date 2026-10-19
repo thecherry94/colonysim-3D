@@ -28,6 +28,11 @@ public sealed class ColonyMap
     /// <summary>The colonists and the clock: landed by the generator or loaded; without either, an empty colony homed at the start site.</summary>
     public Colony Colony { get; }
 
+    /// <summary>Increments when the player changes the colony (priorities, bookmarks, colonists), not when the simulation moves it; the HUD's unsaved-changes check reads it.</summary>
+    public int ColonyVersion { get; private set; }
+
+    public void MarkColonyChanged() => ColonyVersion++;
+
     Navigation? _nav;
 
     /// <summary>Sections and connectivity, built on first access (main thread); from then on it tracks <see cref="VoxelWorld.Changed"/>.</summary>

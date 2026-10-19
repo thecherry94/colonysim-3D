@@ -43,7 +43,7 @@ public partial class Hud : CanvasLayer
     Button _work = null!, _pause = null!;
     Label _day = null!;
     readonly List<(Button Button, int Speed)> _simSpeeds = new();
-    (int World, int Jobs) _savedVersion;
+    (int World, int Jobs, int Colony) _savedVersion;
 
     public void Setup(MapScene scene) => _scene = scene;
 
@@ -137,7 +137,7 @@ public partial class Hud : CanvasLayer
         }
     }
 
-    (int, int) CurrentVersion() => (_scene.Map.World.EditVersion, _scene.Map.Jobs.Version);
+    (int, int, int) CurrentVersion() => (_scene.Map.World.EditVersion, _scene.Map.Jobs.Version, _scene.Map.ColonyVersion);
 
     void OnMenuPressed()
     {

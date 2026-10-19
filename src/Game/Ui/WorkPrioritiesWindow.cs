@@ -115,6 +115,7 @@ public partial class WorkPrioritiesWindow : PanelContainer
                     if (e is not InputEventMouseButton { Pressed: true } press) return;
                     if (press.ButtonIndex is not (MouseButton.Left or MouseButton.Right)) return;
                     colonist.Priorities[cell.Work] = Cycle(colonist.Priorities[cell.Work], press.ButtonIndex == MouseButton.Left);
+                    _scene.Map.MarkColonyChanged();
                     button.AcceptEvent();
                 };
                 _cells.Add(cell);

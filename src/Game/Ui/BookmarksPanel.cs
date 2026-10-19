@@ -56,6 +56,7 @@ public partial class BookmarksPanel : VBoxContainer
         string text = _name.Text.Trim();
         int level = _scene.Slice.ViewLevel;
         _scene.Map.Colony.Bookmarks.Add(new ViewBookmark(text.Length > 0 ? text : $"Level {level}", level));
+        _scene.Map.MarkColonyChanged();
         _name.Clear();
         _name.ReleaseFocus();
     }
@@ -88,7 +89,7 @@ public partial class BookmarksPanel : VBoxContainer
             jump.SizeFlagsHorizontal = SizeFlags.ExpandFill;
             jump.Alignment = HorizontalAlignment.Left;
             jump.ClipText = true;
-            var delete = Hud.ActionButton("✕", () => _scene.Map.Colony.Bookmarks.Remove(b));
+            var delete = Hud.ActionButton("✕", () => { if (_scene.Map.Colony.Bookmarks.Remove(b)) _scene.Map.MarkColonyChanged(); });
             row.AddChild(jump);
             row.AddChild(delete);
             _list.AddChild(row);
