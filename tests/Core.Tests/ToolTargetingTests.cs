@@ -12,6 +12,16 @@ public class ToolTargetingTests
     }
     [Fact] public void Raycast_RespectsMaxY() { VoxelRaycast.Cast(Flat(), new(10.5f, 300, 10.5f), -Vector3.UnitY, 1000, 120, out var h); Assert.Equal(120, h.Block.Y); }
     [Fact] public void Raycast_FromOutsideMap_HitsSideFace() { Assert.True(VoxelRaycast.Cast(Flat(), new(-20, 100.5f, 5.5f), Vector3.UnitX, 1000, 255, out var h)); Assert.Equal(new Int3(-1, 0, 0), h.Normal); Assert.Equal(0, h.Block.X); }
+    [Fact] public void Raycast_HitsRampsAndLadders()
+    {
+        var w = TestWorlds.SolidBelow(64, 150);
+        w.SetBlock(10, 151, 10, Blocks.BuiltRamp(BuildMaterial.Wood, Facing.East), markDirty: false);
+        w.SetBlock(20, 151, 20, Blocks.Ladder(Facing.North), markDirty: false);
+        Discovery.InitialFlood(w);
+        var v = new PlayerView(w, new TerrainLayers(MapSettings.Create(1, MapSize.Small)));
+        Assert.True(VoxelRaycast.Cast(v, new(10.5f, 300, 10.5f), -Vector3.UnitY, 1000, 255, out var h)); Assert.Equal(new Int3(10, 151, 10), h.Block);
+        Assert.True(VoxelRaycast.Cast(v, new(20.5f, 300, 20.5f), -Vector3.UnitY, 1000, 255, out h)); Assert.Equal(new Int3(20, 151, 20), h.Block);
+    }
     [Fact] public void Raycast_SkyMisses() => Assert.False(VoxelRaycast.Cast(Flat(), new(10, 300, 10), Vector3.UnitY, 1000, 255, out _));
     [Fact] public void Target_SlicedUsesViewLevel() => Assert.Equal(new Int3(4, 120, 6), ToolTargeting.Target(DesignationTool.Wall, new(new(4, 110, 6), new(0, 1, 0), default), 120, 255));
     [Fact] public void Target_TopLevel_BuildUsesFaceNeighbor() => Assert.Equal(new Int3(4, 151, 6), ToolTargeting.Target(DesignationTool.Floor, new(new(4, 150, 6), new(0, 1, 0), default), 255, 255));

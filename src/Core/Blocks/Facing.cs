@@ -12,4 +12,19 @@ public static class FacingExtensions
         Facing.South => new Int3(0, 0, 1),
         _ => new Int3(-1, 0, 0),
     };
+
+    /// <summary>N to E to S to W to N.</summary>
+    public static Facing Clockwise(this Facing f) => (Facing)(((int)f + 1) & 3);
+
+    public static Facing Opposite(this Facing f) => (Facing)(((int)f + 2) & 3);
+
+    /// <summary>Inverse of <see cref="Offset"/>; only unit offsets are valid.</summary>
+    public static Facing FromOffset(int dx, int dz) => (dx, dz) switch
+    {
+        (0, -1) => Facing.North,
+        (1, 0) => Facing.East,
+        (0, 1) => Facing.South,
+        (-1, 0) => Facing.West,
+        _ => throw new ArgumentException($"Not a unit offset: ({dx}, {dz})"),
+    };
 }

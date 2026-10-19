@@ -8,7 +8,7 @@ public readonly record struct RaycastHit(Int3 Block, Int3 Normal, Vector3 Point)
 public static class VoxelRaycast
 {
     /// <summary>
-    /// Finds the first Cube/Stairs cell along the ray. Air and liquid are passed through; cells above
+    /// Finds the first solid-ish cell (anything but air and liquid; ramps and ladders included) along the ray. Air and liquid are passed through; cells above
     /// <paramref name="maxY"/> count as empty. Origins outside the map are fine: the ray is clipped to the map box first.
     /// </summary>
     public static bool Cast(PlayerView view, Vector3 origin, Vector3 direction, float maxDistance, int maxY, out RaycastHit hit)
@@ -75,7 +75,7 @@ public static class VoxelRaycast
     static bool IsPickable(PlayerView view, int x, int y, int z)
     {
         var shape = Blocks.Registry.Get(view.GetVisibleBlock(x, y, z)).Shape;
-        return shape == BlockShape.Cube || shape == BlockShape.Stairs;
+        return shape != BlockShape.None && shape != BlockShape.Liquid;
     }
 
     static float Comp(Vector3 v, int a) => a == 0 ? v.X : a == 1 ? v.Y : v.Z;
