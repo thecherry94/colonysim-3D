@@ -6,7 +6,7 @@ namespace ColonySim.Game;
 
 /// <summary>
 /// Root of the map scene: owns the map, the lighting, the renderers, the camera, the slice view, the designation
-/// tools with their overlay, instant work, the HUD and the debug overlay.
+/// tools with their overlay, instant work, the simulation with its colonists, the HUD and the debug overlay.
 /// </summary>
 public partial class MapScene : Node3D
 {
@@ -24,6 +24,8 @@ public partial class MapScene : Node3D
     public DesignationOverlay Overlay { get; private set; } = null!;
     public ToolController Tools { get; private set; } = null!;
     public InstantWorkRunner Work { get; private set; } = null!;
+    public SimRunner SimRunner { get; private set; } = null!;
+    public ColonistRenderer ColonistRenderer { get; private set; } = null!;
     public Hud Hud { get; private set; } = null!;
     public DebugOverlay DebugOverlay { get; private set; } = null!;
 
@@ -96,6 +98,18 @@ public partial class MapScene : Node3D
         Tools = new ToolController { Name = "Tools" };
         AddChild(Tools);
         Tools.Setup(this);
+
+        // Building the simulation builds navigation (up to half a second on Large): here, not mid-game. It also has to
+        // exist before instant work runs, which checks for colonists in the way through the simulation's body map.
+        SimRunner = new SimRunner { Name = "SimRunner" };
+        AddChild(SimRunner);
+        SimRunner.Setup(new Simulation(Map));
+        // The harness's step 1 scenarios edit the world and its job queue directly: colonists stay out of them.
+        if (shots) SimRunner.Speed = 0;
+
+        ColonistRenderer = new ColonistRenderer { Name = "Colonists" };
+        AddChild(ColonistRenderer);
+        ColonistRenderer.Setup(Map, SimRunner, Slice);
 
         Work = new InstantWorkRunner { Name = "InstantWork" };
         AddChild(Work);

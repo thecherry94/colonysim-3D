@@ -3,7 +3,7 @@ using Godot;
 namespace ColonySim.Game;
 
 /// <summary>
-/// Debug overlay (top right): FPS, meshed/total chunks, meshing queue, last level-change time and queued jobs.
+/// Debug overlay (top right): FPS, meshed/total chunks, meshing queue, last level-change time and queued jobs, colonists, tick time, pending paths and navigation.
 /// F3 toggles it; it starts on in debug builds.
 /// </summary>
 public partial class DebugOverlay : CanvasLayer
@@ -29,7 +29,7 @@ public partial class DebugOverlay : CanvasLayer
         panel.OffsetRight = -12;
         panel.OffsetTop = 12;
         _stats = Hud.Text("Stats", 13, Hud.TextColor);
-        _stats.CustomMinimumSize = new Vector2(190, 0); // stops the panel jittering as the numbers change width
+        _stats.CustomMinimumSize = new Vector2(230, 0); // stops the panel jittering as the numbers change width
         panel.AddChild(_stats);
         AddChild(panel);
         Visible = OS.IsDebugBuild();
@@ -55,11 +55,16 @@ public partial class DebugOverlay : CanvasLayer
     {
         _sinceRefresh = 0;
         var chunks = _scene.Chunks;
+        var sim = _scene.SimRunner.Sim;
         _stats.Text =
             $"FPS {Engine.GetFramesPerSecond():0}\n" +
             $"Chunks meshed {chunks.MeshedChunks} / {chunks.TotalChunks}\n" +
             $"Meshing queue {chunks.PendingChunks}\n" +
             $"Level change {_scene.Slice.LastLevelChangeMs:0.0} ms\n" +
-            $"Jobs {_scene.Map.Jobs.Count}";
+            $"Jobs {_scene.Map.Jobs.Count}\n" +
+            $"Colonists {_scene.Map.Colony.Colonists.Count}\n" +
+            $"Tick {_scene.SimRunner.AvgTickMs:0.00} ms avg · {_scene.SimRunner.LastTickMs:0.00} last\n" +
+            $"Pending paths {sim.Paths.Pending}\n" +
+            $"Nav sections {sim.Nav.SectionCount} · version {sim.Nav.Version}";
     }
 }

@@ -60,6 +60,8 @@ public partial class VisualShots : Node
             }),
             ("overview_full", MeasureOverviewFps),
             (null, RecordGeneratedHash),
+            // Right after the generated hash: the start site is still bare, before the building scenarios share its ground.
+            .. ColonyScenarios(),
             (null, CheckDebugOverlay),
             ("camera_rotated", () =>
             {

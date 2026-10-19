@@ -5,7 +5,7 @@ namespace ColonySim.Game;
 
 /// <summary>
 /// In-game HUD: the view-level indicator, the debug view toggles, Save (also Ctrl+S) and Menu with their messages
-/// (top left), the tool status line (bottom center) and the toolbar (bottom): tools, build material, instant work
+/// (top left), the tool status line (bottom center) and the toolbar (bottom): time controls with the day, tools, build material, debug instant work
 /// and the queued job count. Menu asks first when blocks or jobs changed since the map was saved, loaded or generated. HUD buttons never take keyboard focus, so Tab, Esc and the number keys always reach
 /// the tools.
 /// </summary>
@@ -39,7 +39,9 @@ public partial class Hud : CanvasLayer
     readonly List<(Button Button, DesignationTool? Tool)> _tools = new();
     readonly List<(Button Button, BuildMaterial Material)> _materials = new();
     readonly List<(Button Button, int Speed)> _speeds = new();
-    Button _work = null!;
+    Button _work = null!, _pause = null!;
+    Label _day = null!;
+    readonly List<(Button Button, int Speed)> _simSpeeds = new();
     (int World, int Jobs) _savedVersion;
 
     public void Setup(MapScene scene) => _scene = scene;
@@ -83,9 +85,12 @@ public partial class Hud : CanvasLayer
         // State can also change from hotkeys, so the buttons mirror it every frame.
         foreach (var (button, tool) in _tools) button.SetPressedNoSignal(_scene.Tools.ActiveTool == tool);
         foreach (var (button, material) in _materials) button.SetPressedNoSignal(_scene.Tools.Material == material);
+        _pause.SetPressedNoSignal(_scene.SimRunner.Speed == 0);
+        foreach (var (button, speed) in _simSpeeds) button.SetPressedNoSignal(_scene.SimRunner.Speed == speed);
+        SetText(_day, $"Day {SimClock.Day(_scene.Map.Colony.Tick)}");
         foreach (var (button, speed) in _speeds) button.SetPressedNoSignal(_scene.Work.SpeedMultiplier == speed);
         _work.SetPressedNoSignal(_scene.Work.Enabled);
-        SetText(_work, _scene.Work.Enabled ? "⏸ Instant work" : "▶ Instant work");
+        SetText(_work, _scene.Work.Enabled ? "⏸ Instant work (debug)" : "▶ Instant work (debug)");
         _caps.SetPressedNoSignal(_scene.Slice.CapsEnabled);
         _fog.SetPressedNoSignal(_scene.Slice.FogEnabled);
 
@@ -206,6 +211,9 @@ public partial class Hud : CanvasLayer
 
         var toolbar = Panel("Toolbar", 10);
         toolbar.SizeFlagsHorizontal = Control.SizeFlags.ShrinkCenter;
+        var rows = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
+        rows.AddThemeConstantOverride("separation", 6);
+        rows.AddChild(BuildTimeControls());
         var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
         row.AddThemeConstantOverride("separation", 6);
 
@@ -230,7 +238,7 @@ public partial class Hud : CanvasLayer
         row.AddChild(Text("Tab", 12, DimTextColor));
 
         row.AddChild(new VSeparator());
-        _work = ToggleButton("▶ Instant work", null);
+        _work = ToggleButton("▶ Instant work (debug)", null);
         StyleButton(_work, WorkOnColor, TextColor);
         _work.Toggled += on => _scene.Work.Enabled = on;
         row.AddChild(_work);
@@ -248,9 +256,34 @@ public partial class Hud : CanvasLayer
         _jobs.CustomMinimumSize = new Vector2(130, 0);
         row.AddChild(_jobs);
 
-        toolbar.AddChild(row);
+        rows.AddChild(row);
+        toolbar.AddChild(rows);
         column.AddChild(toolbar);
         return column;
+    }
+
+    /// <summary>The toolbar's top row, right-aligned: pause, 1× 2× 3× and the day.</summary>
+    Control BuildTimeControls()
+    {
+        var row = new HBoxContainer { Name = "TimeControls", MouseFilter = Control.MouseFilterEnum.Ignore, Alignment = BoxContainer.AlignmentMode.End };
+        row.AddThemeConstantOverride("separation", 6);
+        _day = Text("Day", 13, TextColor);
+        _day.CustomMinimumSize = new Vector2(64, 0);
+        row.AddChild(_day);
+        var group = new ButtonGroup();
+        _pause = ToggleButton("⏸", group);
+        _pause.Pressed += () => _scene.SimRunner.Speed = 0;
+        row.AddChild(_pause);
+        for (int speed = 1; speed <= SimRunner.MaxSpeed; speed++)
+        {
+            int s = speed;
+            var button = ToggleButton($"{s}×", group);
+            button.Pressed += () => _scene.SimRunner.Speed = s;
+            _simSpeeds.Add((button, s));
+            row.AddChild(button);
+        }
+        row.AddChild(Text("Space", 12, DimTextColor));
+        return row;
     }
 
     void OnStatusChanged() => SetText(_status, _scene.Tools.Status);
