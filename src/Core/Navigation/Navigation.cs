@@ -210,7 +210,7 @@ public sealed class Navigation
             for (int cz = lo.Z; cz <= hi.Z; cz++)
                 for (int cx = lo.X; cx <= hi.X; cx++)
                 {
-                    var chunk = NavChunk.Build(rules, new Int3(cx, cy, cz), _builder);
+                    var chunk = NavChunk.Build(rules, new Int3(cx, cy, cz), _builder, costs: false);
                     int ci = ChunkIndex(cx, cy, cz);
                     indices.Add(ci);
                     chunks.Add(chunk);
@@ -251,6 +251,12 @@ public sealed class Navigation
     internal bool IsCurrent(int previewSerial) => previewSerial == _previewSerial;
 
     internal VoxelWorld World => _world;
+
+    /// <summary><see cref="SectionLinks"/> as a span, for the pathfinder's inner loops.</summary>
+    internal ReadOnlySpan<SectionLink> LinksOf(int section) => _links[section];
+
+    /// <summary>The chunk holding a cell (any cell in bounds), for its keys, sections and landmark costs.</summary>
+    internal NavChunk ChunkAt(Int3 c) => _chunks[ChunkIndexOf(c)];
 
     internal int ChunkIndexOf(Int3 c) => ChunkIndex(c.X >> 5, c.Y >> 5, c.Z >> 5);
 
@@ -333,7 +339,7 @@ public sealed class Navigation
     /// <summary>Keeps the cheapest candidate per (section, target) as the chunk's sections' links; true if any changed.</summary>
     bool WriteLinks(NavChunk chunk, List<(int Local, SectionLink Link)> candidates, List<SectionLink> scratch)
     {
-        candidates.Sort(LinkOrder);
+        candidates.Sort((a, b) => LinkOrder(chunk, a, b));
         bool changed = false;
         int k = 0;
         for (int l = 0; l < chunk.SectionCount; l++)
@@ -349,15 +355,30 @@ public sealed class Navigation
         return changed;
     }
 
-    /// <summary>By section, target, cost, then the cells, so the kept link doesn't depend on the order moves were found.</summary>
-    static int LinkOrder((int Local, SectionLink Link) a, (int Local, SectionLink Link) b)
+    /// <summary>
+    /// By section, target, cost, then nearness to the middle between the two sections' anchors (so that between open
+    /// sections the link sits mid-border, where paths cross, not in a corner: the pathfinder steers by link cells),
+    /// then the cells, so the kept link doesn't depend on the order moves were found.
+    /// </summary>
+    int LinkOrder(NavChunk chunk, (int Local, SectionLink Link) a, (int Local, SectionLink Link) b)
     {
         int d = a.Local.CompareTo(b.Local);
         if (d == 0) d = a.Link.ToSection.CompareTo(b.Link.ToSection);
         if (d == 0) d = a.Link.Cost.CompareTo(b.Link.Cost);
+        if (d == 0)
+        {
+            Int3 mid = chunk.Anchors[a.Local] + _anchors[a.Link.ToSection]; // twice the middle
+            d = Off(a.Link, mid).CompareTo(Off(b.Link, mid));
+        }
         if (d == 0) d = Compare(a.Link.From, b.Link.From);
         if (d == 0) d = Compare(a.Link.To, b.Link.To);
         return d;
+
+        static int Off(SectionLink l, Int3 mid)
+        {
+            Int3 o = l.From + l.To - mid;
+            return o.X * o.X + o.Y * o.Y + o.Z * o.Z;
+        }
 
         static int Compare(Int3 p, Int3 q)
         {

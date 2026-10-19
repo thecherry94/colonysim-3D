@@ -14,8 +14,13 @@ internal sealed class NavChunk
 {
     const ushort Unlabeled = ushort.MaxValue;
 
+    /// <summary>
+    /// Path-cost landmarks per section: its anchor, then each time the member farthest (by cost) from those so far.
+    /// </summary>
+    public const int Landmarks = 4;
+
     /// <summary>A chunk without standable cells (shared: never mutated).</summary>
-    public static readonly NavChunk Empty = new([], [], [], []);
+    public static readonly NavChunk Empty = new([], [], [], [], []);
 
     /// <summary>Cell keys (<see cref="KeyOf"/>), ascending.</summary>
     public readonly ushort[] Keys;
@@ -29,14 +34,23 @@ internal sealed class NavChunk
     /// <summary>Global section id per local section.</summary>
     public int[] Sections = [];
 
+    /// <summary>
+    /// Per key, <see cref="Landmarks"/> costs: the cheapest way from each landmark of the cell's section to the cell,
+    /// by moves inside the chunk (cell i's are at i * Landmarks). By the triangle inequality their differences bound
+    /// the cost between two cells of a section from below (for ways inside the chunk), which is how the pathfinder
+    /// estimates crossing a section. Empty when built without costs (previews).
+    /// </summary>
+    public readonly float[] LandmarkCosts;
+
     /// <summary>The moves out of the chunk found by the build, until <see cref="DropCross"/>.</summary>
     public CrossMove[] Cross { get; private set; }
 
-    NavChunk(ushort[] keys, ushort[] local, Int3[] anchors, CrossMove[] cross)
+    NavChunk(ushort[] keys, ushort[] local, Int3[] anchors, float[] landmarkCosts, CrossMove[] cross)
     {
         Keys = keys;
         Local = local;
         Anchors = anchors;
+        LandmarkCosts = landmarkCosts;
         Cross = cross;
     }
 
@@ -54,8 +68,15 @@ internal sealed class NavChunk
     /// <summary>The local section of a cell of this chunk, or -1 when it isn't standable.</summary>
     public int LocalOf(Int3 c)
     {
-        int i = Keys.AsSpan().BinarySearch((ushort)KeyOf(c));
+        int i = IndexOf(c);
         return i < 0 ? -1 : Local[i];
+    }
+
+    /// <summary>The index of a cell of this chunk among <see cref="Keys"/>, or -1 when it isn't standable.</summary>
+    public int IndexOf(Int3 c)
+    {
+        int i = Keys.AsSpan().BinarySearch((ushort)KeyOf(c));
+        return i < 0 ? -1 : i;
     }
 
     /// <summary>Same cells in the same sections with the same local ids (builds are deterministic).</summary>
@@ -71,10 +92,22 @@ internal sealed class NavChunk
         internal readonly List<Int3> Anchors = new();
         internal readonly List<CrossMove> Cross = new();
         internal readonly Move[] Moves = new Move[NavRules.MaxMoves];
+        // The moves inside the chunk, per cell index: its edges are EdgeTo/EdgeCost[EdgeStart[i] .. + EdgeCount[i]].
+        internal readonly int[] EdgeStart = new int[VoxelWorld.ChunkSize * VoxelWorld.ChunkSize * VoxelWorld.ChunkSize];
+        internal readonly byte[] EdgeCount = new byte[VoxelWorld.ChunkSize * VoxelWorld.ChunkSize * VoxelWorld.ChunkSize];
+        internal readonly List<int> EdgeTo = new();
+        internal readonly List<float> EdgeCost = new();
+        internal readonly List<int> AnchorIndex = new();
+        internal readonly float[] Dist = new float[VoxelWorld.ChunkSize * VoxelWorld.ChunkSize * VoxelWorld.ChunkSize];
+        internal readonly float[] Near = new float[VoxelWorld.ChunkSize * VoxelWorld.ChunkSize * VoxelWorld.ChunkSize];
+        internal readonly PriorityQueue<int, float> Heap = new();
     }
 
-    /// <summary>Finds the chunk's standable cells and floods its sections. Only reads through <paramref name="rules"/>.</summary>
-    public static NavChunk Build<TBlocks>(NavRules<TBlocks> rules, Int3 chunk, Builder b) where TBlocks : struct, IKnownBlocks
+    /// <summary>
+    /// Finds the chunk's standable cells and floods its sections, and with <paramref name="costs"/> its
+    /// <see cref="LandmarkCosts"/>. Only reads through <paramref name="rules"/>.
+    /// </summary>
+    public static NavChunk Build<TBlocks>(NavRules<TBlocks> rules, Int3 chunk, Builder b, bool costs = true) where TBlocks : struct, IKnownBlocks
     {
         int x0 = chunk.X * VoxelWorld.ChunkSize, y0 = chunk.Y * VoxelWorld.ChunkSize, z0 = chunk.Z * VoxelWorld.ChunkSize;
         var keys = b.Keys;
@@ -94,7 +127,10 @@ internal sealed class NavChunk
         var local = new ushort[n];
         Array.Fill(local, Unlabeled);
         b.Anchors.Clear();
+        b.AnchorIndex.Clear();
         b.Cross.Clear();
+        b.EdgeTo.Clear();
+        b.EdgeCost.Clear();
         int head = 0, tail = 0;
         for (int seed = 0; seed < n; seed++)
         {
@@ -109,6 +145,8 @@ internal sealed class NavChunk
                 Int3 c = CellOf(keys[b.Queue[head++]], x0, y0, z0);
                 sx += c.X; sy += c.Y; sz += c.Z;
                 int m = rules.GetMoves(c, b.Moves);
+                int from = b.Queue[head - 1];
+                b.EdgeStart[from] = b.EdgeTo.Count;
                 for (int k = 0; k < m; k++)
                 {
                     Int3 to = b.Moves[k].To;
@@ -119,30 +157,85 @@ internal sealed class NavChunk
                     }
                     int j = b.IndexOfKey[KeyOf(to)] - 1;
                     Debug.Assert(j >= 0, $"move target {to} is not standable");
+                    b.EdgeTo.Add(j);
+                    b.EdgeCost.Add(b.Moves[k].Cost);
                     if (local[j] != Unlabeled) continue;
                     local[j] = s;
                     b.Queue[tail++] = j;
                 }
+                b.EdgeCount[from] = (byte)(b.EdgeTo.Count - b.EdgeStart[from]);
             }
-            b.Anchors.Add(NearestMember(keys, b.Queue.AsSpan(start, tail - start), x0, y0, z0, sx, sy, sz));
+            int anchor = NearestMember(keys, b.Queue.AsSpan(start, tail - start), x0, y0, z0, sx, sy, sz);
+            b.AnchorIndex.Add(anchor);
+            b.Anchors.Add(CellOf(keys[anchor], x0, y0, z0));
         }
         for (int i = 0; i < n; i++) b.IndexOfKey[keys[i]] = 0;
-        return new NavChunk(keys.ToArray(), local, b.Anchors.ToArray(), b.Cross.ToArray());
+        return new NavChunk(keys.ToArray(), local, b.Anchors.ToArray(), costs ? LandmarkCostsOf(n, local, b) : [], b.Cross.ToArray());
+    }
+
+    /// <summary>
+    /// Floods the costs from each section's landmarks over the moves inside the chunk (kept by the build in the
+    /// builder's edge lists). Sections share no moves, so one multi-source Dijkstra per landmark rank covers them all:
+    /// first from the anchors, then each time from the members farthest from every landmark so far.
+    /// </summary>
+    static float[] LandmarkCostsOf(int n, ushort[] local, Builder b)
+    {
+        var result = new float[n * Landmarks];
+        var sources = b.AnchorIndex;
+        for (int rank = 0; rank < Landmarks; rank++)
+        {
+            var dist = b.Dist;
+            Array.Fill(dist, float.PositiveInfinity, 0, n);
+            var heap = b.Heap;
+            heap.Clear();
+            foreach (int i in sources)
+            {
+                dist[i] = 0;
+                heap.Enqueue(i, 0);
+            }
+            while (heap.TryDequeue(out int i, out float d))
+            {
+                if (d > dist[i]) continue;
+                for (int e = b.EdgeStart[i], end = e + b.EdgeCount[i]; e < end; e++)
+                {
+                    int j = b.EdgeTo[e];
+                    float nd = d + b.EdgeCost[e];
+                    if (nd >= dist[j]) continue;
+                    dist[j] = nd;
+                    heap.Enqueue(j, nd);
+                }
+            }
+            var near = b.Near;
+            for (int i = 0; i < n; i++)
+            {
+                result[i * Landmarks + rank] = dist[i];
+                near[i] = rank == 0 ? dist[i] : Math.Min(near[i], dist[i]);
+            }
+            if (rank + 1 == Landmarks) break;
+            // The next rank's sources: per section, the member farthest from all landmarks so far.
+            for (int l = 0; l < sources.Count; l++) sources[l] = -1;
+            for (int i = 0; i < n; i++)
+            {
+                int l = local[i], far = sources[l];
+                if (far < 0 || near[i] > near[far]) sources[l] = i;
+            }
+        }
+        return result;
     }
 
     static Int3 CellOf(ushort key, int x0, int y0, int z0) => new(x0 + (key >> 10), y0 + (key & 31), z0 + ((key >> 5) & 31));
 
-    /// <summary>The member closest to the members' mean (sums <paramref name="sx"/>..<paramref name="sz"/>), so anchors sit mid-section.</summary>
-    static Int3 NearestMember(List<ushort> keys, ReadOnlySpan<int> members, int x0, int y0, int z0, long sx, long sy, long sz)
+    /// <summary>The member (key index) closest to the members' mean (sums <paramref name="sx"/>..<paramref name="sz"/>), so anchors sit mid-section.</summary>
+    static int NearestMember(List<ushort> keys, ReadOnlySpan<int> members, int x0, int y0, int z0, long sx, long sy, long sz)
     {
         double mx = (double)sx / members.Length, my = (double)sy / members.Length, mz = (double)sz / members.Length;
-        Int3 best = default;
+        int best = -1;
         double bestD = double.MaxValue;
         foreach (int i in members)
         {
             Int3 c = CellOf(keys[i], x0, y0, z0);
             double dx = c.X - mx, dy = c.Y - my, dz = c.Z - mz, d = dx * dx + dy * dy + dz * dz;
-            if (d < bestD) { bestD = d; best = c; }
+            if (d < bestD) { bestD = d; best = i; }
         }
         return best;
     }
