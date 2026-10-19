@@ -59,4 +59,10 @@ public class ToolTargetingTests
         Assert.Equal(255, ToolTargeting.StepLevel(255, +1, 255, 150));
         Assert.Equal(1, ToolTargeting.StepLevel(1, -1, 255, 150));
     }
+
+    [Fact] public void DigStairs_ActsOnSolidBlockLikeDig()
+    {
+        Assert.Equal(new Int3(4, 150, 6), ToolTargeting.Target(DesignationTool.DigStairs, new(new(4, 150, 6), new(0, 1, 0), default), 255, 255));
+        Assert.Equal(121f, ToolTargeting.DragPlaneHeight(DesignationTool.DigStairs, 120));
+    }
 }

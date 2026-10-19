@@ -179,7 +179,7 @@ public static class MapSerializer
             if (!Enum.IsDefined((JobKind)kind)) throw new InvalidDataException($"Invalid job kind {kind}.");
             if (idx >= paletteCount) throw new InvalidDataException($"Block palette index {idx} out of range.");
             if (!world.InBounds(pos.X, pos.Y, pos.Z) || pos.Y < 1) throw new InvalidDataException($"Job position {pos} is outside the map.");
-            jobs.Add(new Job(pos, (JobKind)kind, palette[idx]));
+            jobs.Add(new JobSpec(pos, (JobKind)kind, palette[idx]));
         }
         return new ColonyMap(settings, world, jobs);
     }

@@ -10,6 +10,7 @@ public sealed class ColonyMap
         Layers = new TerrainLayers(settings);
         View = new PlayerView(world, Layers);
         Jobs = jobs ?? new JobQueue();
+        Jobs.ChunkCounts = new Int3((world.SizeX + 31) / 32, (world.SizeY + 31) / 32, (world.SizeZ + 31) / 32);
     }
 
     public MapSettings Settings { get; }

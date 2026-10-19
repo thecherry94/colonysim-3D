@@ -10,11 +10,11 @@ public static class ToolTargeting
     public static Int3 Target(DesignationTool tool, RaycastHit hit, int viewLevel, int topLevel)
     {
         if (viewLevel < topLevel) return new Int3(hit.Block.X, viewLevel, hit.Block.Z);
-        return tool is DesignationTool.Dig or DesignationTool.Cancel ? hit.Block : hit.Block + hit.Normal;
+        return tool is DesignationTool.Dig or DesignationTool.DigStairs or DesignationTool.Cancel ? hit.Block : hit.Block + hit.Normal;
     }
 
     public static float DragPlaneHeight(DesignationTool tool, int targetY) =>
-        tool is DesignationTool.Dig or DesignationTool.Cancel ? targetY + 1 : targetY;
+        tool is DesignationTool.Dig or DesignationTool.DigStairs or DesignationTool.Cancel ? targetY + 1 : targetY;
 
     public static bool IntersectPlane(Vector3 origin, Vector3 direction, float planeY, out int x, out int z)
     {

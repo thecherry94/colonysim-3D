@@ -34,22 +34,23 @@ public static class Discovery
                 for (int y = lo; y < hi; y++) queue.Push((y * sz + z) * sx + x);
             }
 
-        Flood(w, solid, queue, markDirty: false);
+        Flood(w, solid, queue, markDirty: false, null);
     }
 
-    public static int RevealFrom(VoxelWorld w, int x, int y, int z)
+    /// <summary>Reveals the open space connected to a cell; <paramref name="onDiscovered"/> is called for every newly discovered cell.</summary>
+    public static int RevealFrom(VoxelWorld w, int x, int y, int z, Action<Int3>? onDiscovered = null)
     {
         if (!w.InBounds(x, y, z)) return 0;
         var solid = SolidTable();
         if (solid[w.GetBlock(x, y, z)]) return 0;
         int count = 0;
-        if (!w.IsDiscovered(x, y, z)) { w.SetDiscovered(x, y, z); count++; }
+        if (!w.IsDiscovered(x, y, z)) { w.SetDiscovered(x, y, z); count++; onDiscovered?.Invoke(new Int3(x, y, z)); }
         var queue = new IntQueue(1024);
         queue.Push((y * w.SizeZ + z) * w.SizeX + x);
-        return count + Flood(w, solid, queue, markDirty: true);
+        return count + Flood(w, solid, queue, markDirty: true, onDiscovered);
     }
 
-    static int Flood(VoxelWorld w, bool[] solid, IntQueue queue, bool markDirty)
+    static int Flood(VoxelWorld w, bool[] solid, IntQueue queue, bool markDirty, Action<Int3>? onDiscovered)
     {
         int sx = w.SizeX, sy = w.SizeY, sz = w.SizeZ, found = 0;
         while (queue.TryPop(out int p))
@@ -69,6 +70,7 @@ public static class Discovery
             if (solid[w.GetBlock(nx, ny, nz)] || w.IsDiscovered(nx, ny, nz)) return;
             w.SetDiscovered(nx, ny, nz, markDirty);
             found++;
+            onDiscovered?.Invoke(new Int3(nx, ny, nz));
             queue.Push((ny * sz + nz) * sx + nx);
         }
     }

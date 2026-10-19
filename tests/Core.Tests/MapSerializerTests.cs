@@ -12,7 +12,7 @@ public class MapSerializerTests
         var r = RoundTrip(m);
         Assert.Equal(m.Settings, r.Settings); Assert.Equal(TestWorlds.WorldHash(m.World), TestWorlds.WorldHash(r.World));
         for (int x = 0; x < 64; x += 3) for (int z = 0; z < 64; z += 3) { Assert.Equal(m.World.GetSurfaceHeight(x, z), r.World.GetSurfaceHeight(x, z)); for (int y = 0; y < 256; y += 5) Assert.Equal(m.World.IsDiscovered(x, y, z), r.World.IsDiscovered(x, y, z)); }
-        Assert.Equal(m.Jobs.All.OrderBy(j => j.Position.ToString()), r.Jobs.All.OrderBy(j => j.Position.ToString()));
+        Assert.Equal(m.Jobs.All.Select(j => j.Spec).OrderBy(j => j.Position.ToString()), r.Jobs.All.Select(j => j.Spec).OrderBy(j => j.Position.ToString()));
     }
 
     [Fact] public void RoundTrip_NonDefaultTerrainParams_AreKept()
@@ -80,7 +80,7 @@ public class MapSerializerTests
     public void Load_JobOutsideMap_ThrowsInvalidData(int x, int y, int z)
     {
         var m = TestWorlds.FlatMap();
-        m.Jobs.Add(new Job(new Int3(x, y, z), JobKind.Dig, Blocks.Air));
+        m.Jobs.Add(new JobSpec(new Int3(x, y, z), JobKind.Dig, Blocks.Air));
         var ms = new MemoryStream(); MapSerializer.Save(m, ms); ms.Position = 0;
         Assert.Contains("job", Assert.Throws<InvalidDataException>(() => MapSerializer.Load(ms)).Message, StringComparison.OrdinalIgnoreCase);
     }
@@ -88,8 +88,8 @@ public class MapSerializerTests
     [Fact] public void Load_JobsAtMapLimits_AreKept()
     {
         var m = TestWorlds.FlatMap();
-        m.Jobs.Add(new Job(new Int3(0, 1, 0), JobKind.Dig, Blocks.Air));
-        m.Jobs.Add(new Job(new Int3(63, 255, 63), JobKind.BuildWall, Blocks.StoneBricks));
+        m.Jobs.Add(new JobSpec(new Int3(0, 1, 0), JobKind.Dig, Blocks.Air));
+        m.Jobs.Add(new JobSpec(new Int3(63, 255, 63), JobKind.BuildWall, Blocks.StoneBricks));
         Assert.Equal(2, RoundTrip(m).Jobs.Count);
     }
 }

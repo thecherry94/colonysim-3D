@@ -2,7 +2,7 @@ namespace ColonySim.Core;
 
 /// <summary>
 /// Debug "instant work" mode: completes queued jobs without colonists.
-/// Order: all digs top-down (highest Y first), then builds bottom-up; ties by X, then Z.
+/// Order: all digs (incl. stair carving) top-down (highest Y first), then builds bottom-up; ties by X, then Z.
 /// </summary>
 public static class InstantWorker
 {
@@ -26,25 +26,19 @@ public static class InstantWorker
         while (heap.TryDequeue(out var j, out var k)) batch.Add((j, k));
         batch.Sort((a, b) => a.Key.CompareTo(b.Key));
 
+        int done = 0;
         foreach (var (job, _) in batch)
         {
-            var p = job.Position;
-            if (job.Kind == JobKind.Dig)
-            {
-                map.World.SetBlock(p.X, p.Y, p.Z, Blocks.Air);
-                Discovery.RevealFrom(map.World, p.X, p.Y, p.Z);
-            }
-            else if (map.World.GetBlock(p.X, p.Y, p.Z) == Blocks.Air)
-            {
-                map.World.SetBlock(p.X, p.Y, p.Z, job.Block);
-            }
-            map.Jobs.Remove(p);
+            // An earlier dig in this batch may have revealed the job's cell and removed it.
+            if (!map.Jobs.TryGetById(job.Id, out _)) continue;
+            WorkCompletion.Complete(map, job);
+            done++;
         }
-        return batch.Count;
+        return done;
     }
 
     static (int Phase, int Y, int X, int Z) KeyOf(Job j) =>
-        j.Kind == JobKind.Dig
+        j.Kind is JobKind.Dig or JobKind.CarveStairs
             ? (0, -j.Position.Y, j.Position.X, j.Position.Z)
             : (1, j.Position.Y, j.Position.X, j.Position.Z);
 }

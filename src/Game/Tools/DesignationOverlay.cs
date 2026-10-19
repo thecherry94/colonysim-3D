@@ -19,6 +19,9 @@ public partial class DesignationOverlay : Node3D
     static readonly Color WallColor = Color.FromHtml("#4aa3ff");
     static readonly Color FloorColor = Color.FromHtml("#3fe0c5");
     static readonly Color StairsColor = Color.FromHtml("#b58cff");
+    static readonly Color RampColor = Color.FromHtml("#ff9f43");
+    static readonly Color LadderColor = Color.FromHtml("#c8d6e5");
+    static readonly Color CarveColor = Color.FromHtml("#f368e0");
     static readonly Color CancelColor = Color.FromHtml("#ff5a5a");
 
     /// <summary>One MultiMesh of cubes; its buffer only grows or shrinks by powers of two.</summary>
@@ -84,7 +87,7 @@ public partial class DesignationOverlay : Node3D
         foreach (var layer in _kinds) layer.End();
     }
 
-    public void ShowPreview(IReadOnlyList<Job> jobs, DesignationTool tool)
+    public void ShowPreview(IReadOnlyList<JobSpec> jobs, DesignationTool tool)
     {
         _preview.Material.SetShaderParameter("color", WithAlpha(ToolColor(tool)));
         _preview.Begin(jobs.Count);
@@ -125,6 +128,9 @@ public partial class DesignationOverlay : Node3D
         JobKind.Dig => DigColor,
         JobKind.BuildWall => WallColor,
         JobKind.BuildFloor => FloorColor,
+        JobKind.BuildRamp => RampColor,
+        JobKind.BuildLadder => LadderColor,
+        JobKind.CarveStairs => CarveColor,
         _ => StairsColor,
     };
 
@@ -134,6 +140,9 @@ public partial class DesignationOverlay : Node3D
         DesignationTool.Wall => WallColor,
         DesignationTool.Floor => FloorColor,
         DesignationTool.Stairs => StairsColor,
+        DesignationTool.Ramp => RampColor,
+        DesignationTool.Ladder => LadderColor,
+        DesignationTool.DigStairs => CarveColor,
         _ => CancelColor,
     };
 }
