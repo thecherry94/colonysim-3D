@@ -15,9 +15,20 @@ public partial class VisualShots
     /// <summary>Block hash of the freshly generated harness map, before any scenario edits it.</summary>
     ulong _generatedHash;
 
+    /// <summary>Runs <paramref name="body"/> with the harness's frame-rate cap lifted (for timing benchmarks), then restores it.</summary>
+    async Task Uncapped(Func<Task> body)
+    {
+        int cap = Engine.MaxFps;
+        Engine.MaxFps = 0;
+        try { await body(); }
+        finally { Engine.MaxFps = cap; }
+    }
+
     /// <summary>
     /// <c>overview_fps_avg</c>, <c>overview_frame_ms_p95</c>: zooms out until the whole map is in view, then times
-    /// <see cref="FpsFrames"/> frames with VSync off, so the numbers show real headroom. Also records the render
+    /// <see cref="FpsFrames"/> frames with VSync off and the harness's 60 fps cap lifted (<see cref="Uncapped"/>), so the
+    /// numbers show real headroom. <c>harness_fps_ok</c> is 1 when that uncapped rate is at least 60, a direct check
+    /// that the window is not being throttled. Also records the render
     /// counters of the last frame for profiling.
     /// </summary>
     async Task MeasureOverviewFps()
@@ -49,6 +60,8 @@ public partial class VisualShots
         RenderingServer.ViewportSetMeasureRenderTime(viewport, true);
         try
         {
+          await Uncapped(async () =>
+          {
             await Frames(FpsWarmupFrames);
             var frameMs = new double[FpsFrames];
             long start = Stopwatch.GetTimestamp(), last = start;
@@ -62,6 +75,7 @@ public partial class VisualShots
             double total = Stopwatch.GetElapsedTime(start, last).TotalSeconds;
             Array.Sort(frameMs);
             Metric("overview_fps_avg", FpsFrames / total);
+            Metric("harness_fps_ok", FpsFrames / total >= 60 ? 1 : 0);
             Metric("overview_frame_ms_p95", frameMs[(int)Math.Ceiling(FpsFrames * 0.95) - 1]);
             Metric("overview_frame_ms_max", frameMs[^1]);
             Metric("overview_render", $"draw_calls:{Monitor(Performance.Monitor.RenderTotalDrawCallsInFrame)} " +
@@ -70,6 +84,7 @@ public partial class VisualShots
                 $"render_cpu_ms:{RenderingServer.ViewportGetMeasuredRenderTimeCpu(viewport):0.##} " +
                 $"render_gpu_ms:{RenderingServer.ViewportGetMeasuredRenderTimeGpu(viewport):0.##} " +
                 $"video_mem_mb:{Monitor(Performance.Monitor.RenderVideoMemUsed) / (1024 * 1024)}");
+          });
         }
         finally
         {
