@@ -167,6 +167,11 @@ public partial class VisualShots : Node
         var window = GetWindow();
         window.ContentScaleFactor = 1;
         window.Size = new Vector2I(1280, 720);
+        // A window the compositor deems hidden or unfocused gets frame callbacks at about 1 Hz, and with vsync on that
+        // throttles every frame-bound metric (initial meshing took 37 s instead of under 1 s). A 60 fps cap without vsync
+        // keeps runs independent of the desktop yet behaves like a normal display (uncapped breaks easing-based checks).
+        DisplayServer.WindowSetVsyncMode(DisplayServer.VSyncMode.Disabled);
+        Engine.MaxFps = 60;
         Run();
     }
 
@@ -179,7 +184,10 @@ public partial class VisualShots : Node
             if (_scene.GenerateMs is double gen) Metric("generate_ms", gen);
 
             await WaitForMeshing();
-            Metric("initial_mesh_ms", Stopwatch.GetElapsedTime(_meshStart).TotalMilliseconds);
+            double meshMs = Stopwatch.GetElapsedTime(_meshStart).TotalMilliseconds;
+            Metric("initial_mesh_ms", meshMs);
+            // Small map: step 1 and the pre-task code meshed it in about 0.5 s free-running (37 s when vsync-throttled).
+            Metric("initial_mesh_ok", meshMs < 10000 ? 1 : 0);
             await Frames(SettleFrames);
 
             foreach (var (name, setup) in Scenarios())
