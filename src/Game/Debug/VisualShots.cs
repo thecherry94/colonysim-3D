@@ -23,6 +23,8 @@ public partial class VisualShots : Node
     const int HouseSiteW = 20, HouseSiteD = 8, PitOffsetX = 12;
     // Tool check site: drags over a 5×4 rectangle starting 2 blocks in.
     const int ToolSiteW = 9, ToolSiteD = 8;
+    // The step 1 building sites keep this far from the start site's center, past the colony scenarios' digs.
+    const int StartSiteGap = 20;
     const int WorkTimeoutFrames = 3000;
 
     MapScene _scene = null!;
@@ -126,6 +128,8 @@ public partial class VisualShots : Node
             ("cave_hidden", () => FindHiddenCave(house)),
             ("cave_revealed", RevealCave),
             ("cave_shallow", ShallowCave),
+            // Last, on ground nothing later uses: the step 2a "done when" run and the benchmark, which spawns up to 100 colonists.
+            .. DoneWhenScenarios(),
         ];
     }
 
@@ -347,11 +351,14 @@ public partial class VisualShots : Node
 
     /// <summary>
     /// The flattest <paramref name="w"/>×<paramref name="d"/> area (plus a 1-block margin) with only air for 12 blocks
-    /// above the ground (no trees, no water), nearest the map center and well away from <paramref name="avoid"/>.
+    /// above the ground (no trees, no water), nearest the map center, well away from <paramref name="avoid"/> and at least
+    /// <see cref="StartSiteGap"/> blocks clear of the start site's center: the colony lives there, and a wall built over home
+    /// would seal its home component in.
     /// </summary>
     Site FlatSite(int w, int d, Site? avoid)
     {
         var world = _scene.Map.World;
+        var start = _scene.Map.StartSite;
         const int margin = 40, clearance = 12;
         Site best = default;
         long bestScore = long.MaxValue;
@@ -359,6 +366,7 @@ public partial class VisualShots : Node
             for (int x = margin; x + w + margin <= world.SizeX; x += 4)
             {
                 if (avoid is { } a && Math.Abs(x - a.X) < 48 && Math.Abs(z - a.Z) < 48) continue;
+                if (start.X > x - StartSiteGap && start.X < x + w + StartSiteGap && start.Z > z - StartSiteGap && start.Z < z + d + StartSiteGap) continue;
                 int lo = int.MaxValue, hi = int.MinValue;
                 bool clear = true;
                 for (int dz = -1; dz <= d && clear; dz++)

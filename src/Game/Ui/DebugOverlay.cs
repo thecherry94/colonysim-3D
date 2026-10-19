@@ -4,7 +4,7 @@ namespace ColonySim.Game;
 
 /// <summary>
 /// Debug overlay (top right): FPS, meshed/total chunks, meshing queue, last level-change time and queued jobs, colonists, tick time, pending paths and navigation.
-/// F3 toggles it; it starts on in debug builds.
+/// F3 toggles it; it starts on in debug builds. F9 spawns <see cref="MapScene.DebugSpawnCount"/> colonists at home, shown or not.
 /// </summary>
 public partial class DebugOverlay : CanvasLayer
 {
@@ -45,8 +45,9 @@ public partial class DebugOverlay : CanvasLayer
 
     public override void _UnhandledInput(InputEvent @event)
     {
-        if (!@event.IsActionPressed(InputActions.DebugOverlay)) return;
-        Visible = !Visible;
+        if (@event.IsActionPressed(InputActions.DebugOverlay)) Visible = !Visible;
+        else if (@event.IsActionPressed(InputActions.DebugSpawnColonists)) _scene.SpawnColonists(MapScene.DebugSpawnCount);
+        else return;
         if (Visible) Refresh();
         GetViewport().SetInputAsHandled();
     }
@@ -62,7 +63,7 @@ public partial class DebugOverlay : CanvasLayer
             $"Meshing queue {chunks.PendingChunks}\n" +
             $"Level change {_scene.Slice.LastLevelChangeMs:0.0} ms\n" +
             $"Jobs {_scene.Map.Jobs.Count}\n" +
-            $"Colonists {_scene.Map.Colony.Colonists.Count}\n" +
+            $"Colonists {_scene.Map.Colony.Colonists.Count} (F9 +{MapScene.DebugSpawnCount})\n" +
             $"Tick {_scene.SimRunner.AvgTickMs:0.00} ms avg · {_scene.SimRunner.LastTickMs:0.00} last\n" +
             $"Pending paths {sim.Paths.Pending}\n" +
             $"Nav sections {sim.Nav.SectionCount} · version {sim.Nav.Version}";

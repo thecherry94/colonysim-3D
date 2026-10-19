@@ -37,7 +37,10 @@ public sealed class Colonist(int id, string name)
     /// <summary>The job it is on, or 0.</summary>
     public long JobId { get; set; }
 
-    /// <summary>It can't reach home: refreshed when navigation changes and when it lands from a fall.</summary>
+    /// <summary>
+    /// It can't reach home from where it is settling (the end of its move, or where it lands when its floor is gone):
+    /// refreshed when navigation changes and when it lands from a fall.
+    /// </summary>
     public bool Stuck { get; set; }
 
     /// <summary>How its last walk ended.</summary>

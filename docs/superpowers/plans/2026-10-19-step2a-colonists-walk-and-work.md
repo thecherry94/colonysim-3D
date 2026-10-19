@@ -1045,3 +1045,48 @@ Keep the existing corrupt/truncated/newer-version tests.
   - Read every new PNG.
 - [ ] **Step 4: Record the numbers** in `docs/superpowers/plans/2026-10-19-step2a-colonists-walk-and-work.md` under a new "Results" heading at the end.
 - [ ] **Step 5: Commit:** `git commit -m "test(game): colony benchmark and step 2a done-when run"`
+
+## Results
+
+Step 2a's "done when" run and bulk-spawn benchmark (Task 15). Dev machine (RTX 3080, i5-10600K), harness seed 12345,
+`dotnet build ColonySim.sln` then `COLONYSIM_SHOTS=… [COLONYSIM_SHOTS_SIZE=Large] godot --path .`; both runs pass
+(Small 105 s, Large 171 s). Numbers are from `tests/visual/shots-large/metrics.txt` unless marked Small.
+
+**Done when (spec 2a), Large / Small:**
+
+| Item | Check | Large | Small |
+|---|---|---|---|
+| 1 | `done_start_site.png`: 3 colonists on the level core (height range 0), slopes around | ok (723 slope blocks within 24) | ok (709) |
+| 2 | `done_mine`: 2 staircases carved (9/9 stairs) into 2 rooms, 9 levels down, by the 3 starting colonists at 3× | 72 jobs in 164 sim s (limit 600) | 71 jobs in 162 sim s |
+| 2 | `done_ladder_shaft`: climbs out of a 6-deep laddered shaft | 6 ladder moves, 6 sim s | same |
+| 2 | `done_outdoor_climb`: with stairs it walks out (Step, Walk only); without, it climbs the 3-block face | ok | ok |
+| 2 | `done_never_stranded`: no colonist stuck in any frame of the mine run | ok | ok |
+| 3 | `done_skill_growth`: Mining rose | 1→3, 1→3, 4→5 | same |
+| 4 | benchmark below | `bench_20_ok=1` | Large only |
+
+**Benchmark** (60×60×8 dig east of the start site plus 20 Dig-stairs runs, 8 levels each: 21 741 + 493 jobs; extra
+colonists spawned at home; 1× for 15 s, first 3 s dropped; frame cap lifted, so frame times are real frame intervals):
+
+| Colonists | frame avg | frame p99 | frame max | tick avg | tick p99 | tick max | paths pending max | render CPU / GPU |
+|---|---|---|---|---|---|---|---|---|
+| 20 | 2.87 ms | 5.31 ms | 9.37 ms | 0.88 ms | 4.11 ms | 5.48 ms | 2 | 1.65 / 1.94 ms |
+| 50 | 3.15 ms | 7.14 ms | 14.3 ms | 1.81 ms | 8.41 ms | 10.52 ms | 4 | 1.69 / 1.96 ms |
+| 100 | 3.45 ms | 8.34 ms | 13.99 ms | 2.14 ms | 7.42 ms | 9.27 ms | 6 | 1.72 / 1.96 ms |
+
+Limits (20 colonists): frame avg ≤ 16.7 ms, p99 ≤ 25 ms: pass. 50 and 100 are the baseline.
+
+Before the fix, with Core compiled unoptimized (the editor's Debug build): 20 colonists 4.12 / 25.4 ms (avg / p99,
+fails), tick avg 7.32, p99 34.4, max 42.5 ms; 50 colonists 5.65 / 54.7 ms; 100 colonists 7.01 / 66.8 ms. Ticks were
+5–10× slower than the same code optimized; render and UI time were unchanged. Core now builds optimized in every
+configuration.
+
+Notes:
+- The harness window may be hidden by the compositor; `harness_fps_ok=1` shows it was not throttled, but treat
+  absolute fps with care. Frame times include the harness's own per-frame work.
+- The Core path Perf test warms up for 1 s, so cold-JIT paths in game run slower than it measures.
+- Step 1 targets still hold on Large: generation 1.2 s, level step ≤ 8.4 ms, edits visible within 2 frames.
+- Not covered by this run: wall, floor and stair designations completed by colonists and mining coal and iron around
+  the upper caves (spec item 2), and "gravitate to the work they're best at" (item 3). The Core work tests cover
+  priorities and skill preference, bottom-up builds and wall gaps; cave mining has no end-to-end check.
+- Digs only check that the worker keeps a way back. In the 60×60 dig, other colonists can be cut off on a pillar until
+  it is dug from under them: 3 times in 200 simulated seconds at 100 colonists (8–33 s each), in a Core replay.

@@ -106,6 +106,33 @@ public class SimulationTests
         Assert.Null(c.Motion);
     }
 
+    [Fact] public void FloorDugAway_FallingColonistIsNotStuck()
+    {
+        var map = TestWorlds.FlatMap();
+        var sim = new Simulation(map);
+        var c = sim.Spawn(new Int3(20, 151, 20));
+        TestWorlds.Dig(map, 20, 150, 20); // it drops into a hole one deep, which it can hop out of
+        for (int t = 0; t < 4; t++)
+        {
+            sim.Tick();
+            Assert.False(c.Stuck, $"tick {t}: at {c.Cell}, {c.Activity}");
+        }
+        Assert.Equal(new Int3(20, 150, 20), c.Cell);
+    }
+
+    [Fact] public void FloorDugAwayMidStep_StuckIsJudgedWhereTheStepEnds()
+    {
+        var map = TestWorlds.FlatMap();
+        var sim = new Simulation(map);
+        var c = sim.Spawn(new Int3(5, 151, 30));
+        sim.GoTo(c, new Int3(15, 151, 30));
+        for (int t = 0; t < 3; t++) sim.Tick();
+        Assert.Equal(new Int3(6, 151, 30), c.Motion?.To);
+        TestWorlds.Dig(map, 5, 150, 30); // the floor it is stepping off
+        sim.Tick();
+        Assert.False(c.Stuck);
+    }
+
     [Fact] public void WallBuiltOnPath_ColonistRepaths()
     {
         var map = TestWorlds.FlatMap();

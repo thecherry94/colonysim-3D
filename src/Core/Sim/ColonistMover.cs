@@ -107,9 +107,8 @@ internal sealed class ColonistMover(Simulation sim)
     /// <summary>Falls to the first standable cell straight down through open cells; with none, stays put, stuck.</summary>
     void Fall(Colonist c)
     {
-        for (Int3 below = c.Cell + Int3.Down; Rules.IsPassable(below); below += Int3.Down)
+        if (sim.Landing(c.Cell, out var below))
         {
-            if (!Rules.IsStandable(below)) continue;
             int ticks = FallTicksPerBlock * (c.Cell.Y - below.Y);
             c.Motion = new Motion(c.Cell, below, MoveKind.Fall, ticks, 0);
             c.Activity = ColonistActivity.Falling;

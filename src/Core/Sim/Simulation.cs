@@ -98,6 +98,26 @@ public sealed class Simulation
     internal bool IsStuck(Int3 cell) => HomeComponent < 0 ? !Nav.Rules.IsStandable(cell) : Nav.ComponentOf(cell) != HomeComponent;
 
     /// <summary>
+    /// <see cref="IsStuck(Int3)"/> where the colonist is settling: the end of the move under way, or, with nothing under
+    /// it, where it will land. Falling isn't being stuck (a colonist whose floor is dug away drops a level); having nowhere
+    /// to land is.
+    /// </summary>
+    internal bool IsStuck(Colonist c)
+    {
+        Int3 at = c.Motion?.To ?? c.Cell;
+        return IsStuck(!Nav.Rules.IsStandable(at) && Landing(at, out var below) ? below : at);
+    }
+
+    /// <summary>The first standable cell straight down from <paramref name="cell"/> through open cells, if any: where a colonist there falls to.</summary>
+    internal bool Landing(Int3 cell, out Int3 landing)
+    {
+        var rules = Nav.Rules;
+        for (landing = cell + Int3.Down; rules.IsPassable(landing); landing += Int3.Down)
+            if (rules.IsStandable(landing)) return true;
+        return false;
+    }
+
+    /// <summary>
     /// Applies pending world edits to navigation; when that changed it, re-derives home and every colonist's stuck flag.
     /// Work edits the world mid-tick, so the worker calls this before reading components.
     /// </summary>
@@ -108,7 +128,7 @@ public sealed class Simulation
         _navVersion = Nav.Version;
         HomeCell = Nav.HomeCell(Colony.Home, out var home) ? home : null;
         HomeComponent = HomeCell is { } h ? Nav.ComponentOf(h) : -1;
-        foreach (var c in Colony.Colonists) c.Stuck = IsStuck(c.Cell);
+        foreach (var c in Colony.Colonists) c.Stuck = IsStuck(c);
     }
 
     /// <summary>

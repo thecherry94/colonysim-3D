@@ -32,6 +32,7 @@ public static class InputActions
     public const string MaterialCycle = "material_cycle";
     public const string Save = "save";
     public const string DebugOverlay = "debug_overlay";
+    public const string DebugSpawnColonists = "debug_spawn_colonists";
 
     public static void Register()
     {
@@ -62,6 +63,7 @@ public static class InputActions
         Add(MaterialCycle, Key.Tab);
         Add(Save, Key.S, ctrl: true);
         Add(DebugOverlay, Key.F3);
+        Add(DebugSpawnColonists, Key.F9);
     }
 
     static void Add(string action, params Key[] keys) => Add(action, false, keys);

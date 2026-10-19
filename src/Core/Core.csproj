@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+    <!-- The simulation runs optimized in every configuration: the game launched from the editor uses the Debug build,
+         where unoptimized Core code ticks 5-10x slower (20 colonists: tick p99 ~34 ms vs ~4 ms). -->
+    <Optimize>true</Optimize>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ColonySim.Core.Tests" />

@@ -248,12 +248,14 @@ public partial class VisualShots
         return menu;
     }
 
+    /// <summary>Waits for the next map scene and its initial meshing; it becomes the harness's scene.</summary>
     async Task<MapScene> WaitForMapScene()
     {
-        var scene = await WaitForScene<MapScene>();
+        // WaitForMeshing watches _scene: the new one, not the scene the menu just freed.
+        _scene = await WaitForScene<MapScene>();
         _meshStart = Stopwatch.GetTimestamp();
         await WaitForMeshing();
-        return scene;
+        return _scene;
     }
 
     async Task<T> WaitForScene<T>() where T : Node

@@ -13,6 +13,8 @@ public partial class MapScene : Node3D
     public const string ScenePath = "res://scenes/map.tscn";
     public const string ShotsEnv = "COLONYSIM_SHOTS";
     public const string ShotsSizeEnv = "COLONYSIM_SHOTS_SIZE";
+    /// <summary>Colonists the debug spawn action (F9) adds.</summary>
+    public const int DebugSpawnCount = 10;
     const int ShotsSeed = 12345;
     const int DefaultSeed = 1;
 
@@ -174,6 +176,25 @@ public partial class MapScene : Node3D
         if (!@event.IsActionPressed(InputActions.FollowColonist)) return;
         if (_selected != null) Following = !Following;
         GetViewport().SetInputAsHandled();
+    }
+
+    /// <summary>
+    /// Debug: adds <paramref name="count"/> colonists at home (<see cref="Simulation.Spawn"/>, so all on the standable
+    /// cell nearest it). Returns how many landed: none when nothing near home is standable.
+    /// </summary>
+    public int SpawnColonists(int count)
+    {
+        int spawned = 0;
+        try
+        {
+            for (; spawned < count; spawned++) SimRunner.Sim.Spawn(Map.Colony.Home);
+        }
+        catch (InvalidOperationException e)
+        {
+            GD.PushWarning(e.Message);
+        }
+        if (spawned > 0) Map.MarkColonyChanged();
+        return spawned;
     }
 
     static MapSize ParseSize(string value) =>
