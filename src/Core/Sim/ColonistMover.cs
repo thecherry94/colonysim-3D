@@ -54,7 +54,14 @@ internal sealed class ColonistMover(Simulation sim)
         if (c.Activity == ColonistActivity.Walking) c.Activity = ColonistActivity.Idle;
     }
 
+    /// <summary>Moves the colonist one tick, then updates where its body is (<see cref="Colony.Bodies"/>).</summary>
     public void Step(Colonist c)
+    {
+        Move(c);
+        sim.Colony.Bodies.Track(c);
+    }
+
+    void Move(Colonist c)
     {
         if (c.Motion is { } m)
         {

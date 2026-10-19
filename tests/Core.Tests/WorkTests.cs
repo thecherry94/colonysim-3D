@@ -46,7 +46,7 @@ public class WorkTests
                 pending.Remove(p);
             }
         }
-        Assert.Empty(pending);
+        Assert.True(pending.Count == 0, "left: " + string.Join("; ", jobs.All.Select(j => $"{j.Kind} {j.Position} {j.Status}@{j.StatusVersion}")));
         return order;
     }
 
@@ -220,11 +220,79 @@ public class WorkTests
         Assert.Equal((ColonistActivity.Idle, 0L, 0), (builder.Activity, builder.JobId, job.ClaimedBy));
         Assert.Equal(Blocks.Air, map.World.GetBlock(22, 151, 20));
 
+        // Looked at again (a new mark, at a new tick) only every so often, not on every search.
+        long marked = job.StatusTick;
+        while (map.Colony.Tick < marked + JobFinder.SealRecheckTicks) sim.Tick();
+        Assert.Equal(marked, job.StatusTick);
+        Run(sim, () => job.StatusTick != marked, 2 * ColonistWorker.SearchInterval);
+        Assert.Equal(JobStatus.NeedsWayBack, job.Status);
+
         // Once it walks out, the gap can be closed.
         sim.GoTo(inside, new Int3(22, 151, 12));
         Run(sim, () => map.Jobs.Count == 0);
         Assert.Equal(Blocks.WoodPlanks, map.World.GetBlock(22, 151, 20));
         Assert.False(inside.Stuck);
+    }
+
+    [Fact] public void CompletionsInOneTick_WaitForTheSyncBudget()
+    {
+        var map = TestWorlds.FlatMap(128);
+        var sim = new Simulation(map);
+        // One per chunk column, so each finish dirties chunks of its own.
+        var workers = new List<(Colonist C, Job J)>();
+        for (int i = 0; i < 4; i++)
+            for (int k = 0; k < 4; k++)
+                workers.Add((Worker(sim, new Int3(10 + 32 * i, 151, 10 + 32 * k)), Dig(map, new Int3(13 + 32 * i, 150, 10 + 32 * k))));
+        var late = Worker(sim, new Int3(20, 151, 20), miningPriority: 0, constructionPriority: 0); // steps after them all
+        Run(sim, () => workers.All(w => w.C.Activity == ColonistActivity.Working));
+        while ((map.Colony.Tick + late.Id) % ColonistWorker.SearchInterval != 0) sim.Tick();
+        // All one work tick (0.5 at level 0) from done.
+        foreach (var (_, j) in workers) map.Jobs.AddProgress(j, 100 - 0.25f - j.Progress);
+
+        // No budget: only the first finish of the tick, which needs no sync, goes through.
+        sim.SyncBudgetMs = 0;
+        sim.Tick();
+        var held = workers.Where(w => map.Jobs.Contains(w.J.Position)).ToList();
+        Assert.Equal(workers.Count - 1, held.Count);
+        Assert.All(held, w => Assert.True(w.J.Progress >= 100));
+        Assert.True(late.SearchPending);
+        var xp = held.ToDictionary(w => w.C, w => w.C.Skills[(int)SkillType.Mining].Xp);
+
+        // With the budget: some finish, and the held ones never work on past done.
+        sim.SyncBudgetMs = Simulation.MidTickSyncBudgetMs;
+        sim.Tick();
+        Assert.True(sim.MidTickSyncTime - sim.LastMidTickSync < TimeSpan.FromMilliseconds(Simulation.MidTickSyncBudgetMs),
+            $"a sync began past the budget: {sim.MidTickSyncTime.TotalMilliseconds:F2} ms");
+        Run(sim, () => workers.All(w => !map.Jobs.Contains(w.J.Position)), 20);
+        // It searched as soon as there was budget left after the others, not at its next turn in the stagger.
+        Run(sim, () => !late.SearchPending, 1);
+        Assert.All(held, w => Assert.Equal(xp[w.C], w.C.Skills[(int)SkillType.Mining].Xp));
+    }
+
+    [Fact] public void Search_RemembersNothingFound_AndGoesOnAfterTheCap()
+    {
+        var map = TestWorlds.FlatMap();
+        // Two colonists in a sealed pocket, and 300 dig jobs on the surface they can't reach.
+        foreach (var (x, y) in new[] { (10, 140), (10, 141), (11, 140), (11, 141) }) TestWorlds.Dig(map, x, y, 10);
+        for (int z = 20; z < 35; z++)
+            for (int x = 20; x < 40; x++) Dig(map, new Int3(x, 150, z));
+        var sim = new Simulation(map);
+        var a = Worker(sim, new Int3(10, 140, 10));
+        var b = Worker(sim, new Int3(11, 140, 10));
+        var finder = sim.Finder;
+
+        Assert.False(finder.TryFind(sim, a, out _, out _));
+        Assert.Equal(JobFinder.MaxChecks, finder.LastChecks);
+        Assert.False(finder.TryFind(sim, a, out _, out _));
+        Assert.Equal(300 - JobFinder.MaxChecks, finder.LastChecks); // went on from where it stopped
+        Assert.False(finder.TryFind(sim, b, out _, out _));
+        Assert.Equal(0, finder.LastChecks); // nothing to find from this component, remembered
+        Assert.All(map.Jobs.All, j => Assert.Equal(JobStatus.Open, j.Status)); // from outside home, nothing is marked
+
+        // A new job, or a navigation change, and it looks again.
+        Dig(map, new Int3(30, 150, 40));
+        Assert.False(finder.TryFind(sim, b, out _, out _));
+        Assert.Equal(JobFinder.MaxChecks, finder.LastChecks);
     }
 
     [Fact] public void CancelClaimedJob_ColonistGoesIdle()
@@ -267,8 +335,8 @@ public class WorkTests
             Assert.Equal(0f, job.Progress);
         }
         Assert.Equal(ColonistActivity.Working, builder.Activity);
-        // Instant work skips it too, keeping the job.
-        InstantWorker.Step(map, 10);
+        // Instant work skips it too, keeping the job (and doesn't count it as done).
+        Assert.Equal(0, InstantWorker.Step(map, 10));
         Assert.True(map.Jobs.Contains(job.Position));
         Assert.Equal(Blocks.Air, map.World.GetBlock(30, 151, 32));
 
@@ -389,20 +457,54 @@ public class WorkTests
             foreach (var j in found) map.Jobs.Release(j);
 
             var ticks = new List<double>();
+            double midMax = 0;
             for (int t = 0; t < 1000; t++)
             {
                 var sw = Stopwatch.StartNew();
                 sim.Tick();
                 ticks.Add(sw.Elapsed.TotalMilliseconds);
+                midMax = Math.Max(midMax, sim.MidTickSyncTime.TotalMilliseconds);
+                Assert.True(sim.MidTickSyncTime - sim.LastMidTickSync < TimeSpan.FromMilliseconds(Simulation.MidTickSyncBudgetMs), "a sync began past the budget");
             }
             int done = 200_000 - map.Jobs.Count;
+            double p99 = ticks.Order().ElementAt((int)(ticks.Count * 0.99));
             output.WriteLine($"200k jobs added in {add.Elapsed.TotalMilliseconds:F0} ms; TryFind mean {find.Average():F3} ms, max {find.Max():F2} ms; "
-                + $"Tick mean {ticks.Average():F3} ms, max {ticks.Max():F2} ms; {done} jobs done in 1000 ticks"
+                + $"Tick mean {ticks.Average():F3} ms, p99 {p99:F2} ms, max {ticks.Max():F2} ms (mid-tick navigation at most {midMax:F2} ms); {done} jobs done in 1000 ticks"
                 + (Optimized ? "" : " [Debug build: limits not checked, run with -c Release]"));
             Assert.True(done > 0);
             if (!Optimized) return;
             Assert.True(find.Average() < 1, $"TryFind mean {find.Average():F3} ms");
             Assert.True(ticks.Average() < 4, $"Tick mean {ticks.Average():F3} ms");
+            // Not 8: one tick-start sync alone rebuilds a chunk of the pitted surface in 6–8 ms (two at a chunk border),
+            // which no mid-tick budget can take out.
+            Assert.True(p99 <= 16, $"Tick p99 {p99:F2} ms");
+        }
+
+        [Fact, Trait("Category", "Perf")] public void UnreachableJobs_FromOutsideHome_SearchStaysFast()
+        {
+            var map = TestWorlds.FlatMap(128);
+            // One colonist in a sealed pocket; 11,000 ready dig jobs on the surface, none reachable from there.
+            foreach (var (x, y) in new[] { (64, 120), (64, 121) }) TestWorlds.Dig(map, x, y, 64);
+            for (int z = 14; z < 114; z++)
+                for (int x = 9; x < 119; x++) map.Jobs.Add(new JobSpec(new Int3(x, 150, z), JobKind.Dig, Blocks.Air));
+            var sim = new Simulation(map);
+            var c = sim.Spawn(new Int3(64, 120, 64));
+            Assert.True(c.Stuck);
+
+            // Navigation changes before every search (a block toggled far off), so nothing it learned holds for long.
+            var find = new List<double>();
+            for (int i = 0; i < 300; i++)
+            {
+                map.World.SetBlock(2, 151, 2, i % 2 == 0 ? Blocks.Stone : Blocks.Air);
+                sim.SyncNav();
+                var sw = Stopwatch.StartNew();
+                Assert.False(sim.Finder.TryFind(sim, c, out _, out _));
+                if (i >= 20) find.Add(sw.Elapsed.TotalMilliseconds);
+            }
+            output.WriteLine($"11k unreachable jobs, outside home, navigation changing: TryFind mean {find.Average():F3} ms, max {find.Max():F2} ms"
+                + (Optimized ? "" : " [Debug build: limits not checked, run with -c Release]"));
+            if (!Optimized) return;
+            Assert.True(find.Average() < 1, $"TryFind mean {find.Average():F3} ms");
         }
     }
 }

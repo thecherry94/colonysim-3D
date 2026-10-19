@@ -212,6 +212,27 @@ public class SimulationTests
         Assert.Equal((target, WalkResult.Arrived), (c.Cell, c.LastWalk));
     }
 
+    [Fact] public void Bodies_TrackCellsAndMoves()
+    {
+        var map = TestWorlds.FlatMap();
+        var sim = new Simulation(map);
+        var bodies = map.Colony.Bodies;
+        var c = sim.Spawn(new Int3(5, 151, 10));
+        Assert.True(bodies.IsOccupied(new Int3(5, 151, 10)) && bodies.IsOccupied(new Int3(5, 152, 10)));
+        Assert.False(bodies.IsOccupied(new Int3(5, 153, 10)) || bodies.IsOccupied(new Int3(6, 151, 10)));
+        sim.GoTo(c, new Int3(7, 151, 10));
+        Run(sim, () => c.Motion != null, 5);
+        Assert.True(bodies.IsOccupied(new Int3(5, 151, 10)) && bodies.IsOccupied(new Int3(6, 152, 10))); // both ends of the move
+        Run(sim, () => c.Activity == ColonistActivity.Idle, 40);
+        Assert.False(bodies.IsOccupied(new Int3(5, 151, 10)) || bodies.IsOccupied(new Int3(6, 151, 10)));
+        Assert.True(bodies.IsOccupied(new Int3(7, 151, 10)));
+        var other = sim.Spawn(new Int3(7, 151, 10)); // two in one cell: still occupied when one leaves
+        sim.GoTo(c, new Int3(9, 151, 10));
+        Run(sim, () => c.Activity == ColonistActivity.Idle, 40);
+        Assert.True(bodies.IsOccupied(new Int3(7, 152, 10)));
+        Assert.Equal(new Int3(7, 151, 10), other.Cell);
+    }
+
     [Fact] public void NoHome_OnlyColonistsWithNowhereToStandAreStuck()
     {
         // Home deep in the rock: nothing standable near it.

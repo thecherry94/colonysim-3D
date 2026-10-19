@@ -15,4 +15,7 @@ public sealed class Colony(Int3 home)
     public Int3 Home { get; } = home;
 
     public List<ViewBookmark> Bookmarks { get; } = new();
+
+    /// <summary>Where the colonists' bodies are; kept by the simulation's mover.</summary>
+    public BodyMap Bodies { get; } = new();
 }

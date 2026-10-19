@@ -29,6 +29,9 @@ public sealed class JobQueue
     /// <summary>Jobs no other job must go before (the work order above).</summary>
     public int ReadyCount { get; private set; }
 
+    /// <summary>Increments whenever a job may have become available to work: it became ready, or its claim was released.</summary>
+    public int ReadyVersion { get; private set; }
+
     /// <summary>Increments on every change.</summary>
     public int Version { get; private set; }
 
@@ -82,12 +85,19 @@ public sealed class JobQueue
     public bool TryGetById(long id, out Job job) => _byId.TryGetValue(id, out job!);
 
     public void Claim(Job j, int colonistId) { j.ClaimedBy = colonistId; Touch(j); }
-    public void Release(Job j) { j.ClaimedBy = 0; Touch(j); }
+    public void Release(Job j) { j.ClaimedBy = 0; ReadyVersion++; Touch(j); }
 
     /// <summary>Progress is not shown by the overlay, so this neither bumps the version nor marks the chunk.</summary>
     public void AddProgress(Job j, float ticks) => j.Progress += ticks;
 
-    public void SetStatus(Job j, JobStatus s, int navVersion) { j.Status = s; j.StatusVersion = navVersion; Touch(j); }
+    /// <summary>Sets the job's status as found at a navigation version, or (version 0) at a simulation tick.</summary>
+    public void SetStatus(Job j, JobStatus s, int navVersion, long tick = 0)
+    {
+        j.Status = s;
+        j.StatusVersion = navVersion;
+        j.StatusTick = tick;
+        Touch(j);
+    }
 
     public IEnumerable<Job> InChunk(Int3 chunk) =>
         _chunks.TryGetValue(chunk, out var list) ? list : Enumerable.Empty<Job>();
@@ -242,6 +252,7 @@ public sealed class JobQueue
         list.Add(job);
         _readyOfKind[(int)job.Kind]++;
         ReadyCount++;
+        ReadyVersion++;
     }
 
     /// <summary>Takes the job out of its chunk's ready list for its kind (swapping the last one into its place).</summary>

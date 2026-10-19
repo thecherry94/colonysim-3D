@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ColonySim.Core;
 
 /// <summary>
@@ -10,9 +12,16 @@ public sealed class Simulation
     /// <summary>Path search nodes expanded per tick, over all colonists' requests.</summary>
     public const int PathBudget = 15000;
 
+    /// <summary>
+    /// Time per tick for bringing navigation up to date mid-tick (<see cref="TrySyncNav"/>): each job finished edits the
+    /// world, and the next search or finish needs navigation that includes it. Past the budget, those wait a tick.
+    /// </summary>
+    public const double MidTickSyncBudgetMs = 4;
+
     readonly ColonistMover _mover;
     readonly ColonistWorker _worker;
     readonly Random _rng;
+    readonly Stopwatch _midTickSync = new();
     int _navVersion;
 
     public Simulation(ColonyMap map)
@@ -24,6 +33,7 @@ public sealed class Simulation
         Finder = new JobFinder();
         _worker = new ColonistWorker(this);
         _rng = new Random((int)Hash.Of(map.Settings.Seed, 42, 0, 0));
+        foreach (var c in Colony.Colonists) Colony.Bodies.Track(c);
         SyncNav();
     }
 
@@ -41,9 +51,17 @@ public sealed class Simulation
     /// <summary>Chooses colonists' jobs; the <see cref="ColonistWorker"/>'s, open to tests.</summary>
     internal JobFinder Finder { get; }
 
+    /// <summary>The time spent this tick bringing navigation up to date mid-tick, and the last such sync's share of it.</summary>
+    internal TimeSpan MidTickSyncTime => _midTickSync.Elapsed;
+    internal TimeSpan LastMidTickSync { get; private set; }
+
+    /// <summary><see cref="MidTickSyncBudgetMs"/>, changeable for tests.</summary>
+    internal double SyncBudgetMs { get; set; } = MidTickSyncBudgetMs;
+
     /// <summary>One simulation step: navigation, then paths, then each colonist (moving, then working), then the clock.</summary>
     public void Tick()
     {
+        _midTickSync.Reset();
         SyncNav();
         Paths.Process(PathBudget);
         foreach (var c in Colony.Colonists)
@@ -63,6 +81,7 @@ public sealed class Simulation
         var c = ColonistFactory.Create(Colony, _rng);
         c.Cell = cell;
         c.Stuck = IsStuck(cell);
+        Colony.Bodies.Track(c);
         return c;
     }
 
@@ -87,8 +106,24 @@ public sealed class Simulation
         Nav.Update();
         if (Nav.Version == _navVersion) return;
         _navVersion = Nav.Version;
-        HomeCell = Nav.Rules.FindStandableNear(Colony.Home, Navigation.HomeRadius, out var home) ? home : null;
+        HomeCell = Nav.HomeCell(Colony.Home, out var home) ? home : null;
         HomeComponent = HomeCell is { } h ? Nav.ComponentOf(h) : -1;
         foreach (var c in Colony.Colonists) c.Stuck = IsStuck(c.Cell);
+    }
+
+    /// <summary>
+    /// <see cref="SyncNav"/> mid-tick, within <see cref="MidTickSyncBudgetMs"/> per tick: true when navigation is up to
+    /// date (it already was, or the sync fit), false when the budget is spent and the sync would be needed.
+    /// </summary>
+    internal bool TrySyncNav()
+    {
+        if (!Nav.HasPendingEdits && Nav.Version == _navVersion) return true;
+        if (_midTickSync.Elapsed.TotalMilliseconds >= SyncBudgetMs) return false;
+        var before = _midTickSync.Elapsed;
+        _midTickSync.Start();
+        SyncNav();
+        _midTickSync.Stop();
+        LastMidTickSync = _midTickSync.Elapsed - before;
+        return true;
     }
 }

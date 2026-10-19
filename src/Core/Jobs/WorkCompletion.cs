@@ -39,16 +39,6 @@ public static class WorkCompletion
         return valid;
     }
 
-    /// <summary>A colonist's body (its cell and the one above, at either end of a move under way) is in the cell.</summary>
-    public static bool IsOccupied(ColonyMap map, Int3 cell)
-    {
-        foreach (var c in map.Colony.Colonists)
-        {
-            if (Overlaps(c.Cell, cell)) return true;
-            if (c.Motion is { } m && Overlaps(m.To, cell)) return true;
-        }
-        return false;
-
-        static bool Overlaps(Int3 feet, Int3 cell) => cell == feet || cell == feet + Int3.Up;
-    }
+    /// <summary>A colonist's body (its cell and the one above, at either end of a move under way) is in the cell (<see cref="Colony.Bodies"/>).</summary>
+    public static bool IsOccupied(ColonyMap map, Int3 cell) => map.Colony.Bodies.IsOccupied(cell);
 }

@@ -49,6 +49,9 @@ public sealed class Colonist(int id, string name)
     /// <summary>The navigation version its job last passed the <see cref="StrandCheck"/> at.</summary>
     internal int CheckedAt { get; set; }
 
+    /// <summary>Its search was put off (navigation couldn't be brought up to date within the tick's budget): it searches next tick.</summary>
+    internal bool SearchPending { get; set; }
+
     /// <summary>Where it is walking and how, while it walks; the <see cref="ColonistMover"/>'s.</summary>
     internal Walk? Walk { get; set; }
 }

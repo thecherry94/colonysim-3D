@@ -20,8 +20,11 @@ public sealed class Job
 
     public JobStatus Status { get; internal set; }
 
-    /// <summary>The navigation version <see cref="Status"/> was found at.</summary>
+    /// <summary>The navigation version <see cref="Status"/> was found at (0: not tied to one, see <see cref="StatusTick"/>).</summary>
     public int StatusVersion { get; internal set; }
+
+    /// <summary>The simulation tick <see cref="Status"/> was found at, for statuses no navigation version tracks.</summary>
+    internal long StatusTick { get; set; }
 
     public JobSpec Spec => new(Position, Kind, Block);
 

@@ -10,7 +10,8 @@ namespace ColonySim.Core;
 /// left out: the build waits for it to move, it isn't refused.</item>
 /// </list>
 /// A preview rebuilds whole chunks, so most edits are first checked locally (<see cref="CutsNothing"/>): one that
-/// provably disconnects nothing leaves every component as it is, and needs no preview.
+/// provably disconnects nothing leaves every component as it is, and needs no preview. Even with a preview, colonists
+/// are only looked at when the edit splits a piece off home (see <see cref="Edit.Of"/>).
 /// </summary>
 internal static class StrandCheck
 {
@@ -22,6 +23,10 @@ internal static class StrandCheck
 
     /// <summary>How far up and down a cell's moves read blocks (a 3-high climb reads 4 up; its reverse 4 down).</summary>
     const int MoveReadHeight = 4;
+
+    // Scratch, per thread (each simulation runs on one): the ends of what an edit cuts, and the detour search.
+    [ThreadStatic] static HashSet<Int3>? t_ends, t_seen;
+    [ThreadStatic] static Queue<Int3>? t_queue;
 
     public static bool Allows(Simulation sim, Colonist worker, Job job, Int3 workSpot) => Edit.Of(sim, job).Allows(worker, workSpot);
 
@@ -54,14 +59,15 @@ internal static class StrandCheck
             var edited = new NavRules<OverlaidBlocks>(new OverlaidBlocks(sim.Map.View, p, block));
             Int3 d = p - sim.Colony.Home;
             bool nearHome = Math.Max(Math.Abs(d.X), Math.Max(Math.Abs(d.Y), Math.Abs(d.Z))) <= HomeReach;
-            if (!nearHome && CutsNothing(sim.Nav, edited, p)) return new Edit(sim, edited, null, sim.HomeComponent);
+            var ends = Ends(sim.Nav, edited, p);
+            if (!nearHome && (ends.Count < 2 || Connected(edited, ends, p))) return new Edit(sim, edited, null, sim.HomeComponent);
 
             // Home is the standable cell nearest the anchor, which an edit near it may move: find it again in the edited world.
             Int3? homeCell = sim.HomeCell;
             if (nearHome) homeCell = edited.FindStandableNear(sim.Colony.Home, Navigation.HomeRadius, out var h) ? h : null;
             var after = sim.Nav.Preview(p, block);
             var edit = new Edit(sim, edited, after, homeCell is { } cell ? after.ComponentOf(cell) : -1);
-            if (WorkRules.IsBuild(job.Kind) && sim.HomeComponent >= 0)
+            if (WorkRules.IsBuild(job.Kind) && sim.HomeComponent >= 0 && SplitsHome(sim, edited, after, edit._homeAfter, ends))
                 foreach (var c in sim.Colony.Colonists)
                 {
                     Int3 at = At(c);
@@ -69,6 +75,19 @@ internal static class StrandCheck
                     if (sim.Nav.ComponentOf(at) == sim.HomeComponent && after.ComponentOf(at) != edit._homeAfter) edit._cutOff.Add(c);
                 }
             return edit;
+        }
+
+        /// <summary>
+        /// Some cell that is home now is not home after the edit. Every such piece holds one of the edit's ends (an old
+        /// path from it toward home crosses something the edit cut, and the cut's near end stays with it), or else the
+        /// old home cell itself; so when those are all still home, nothing is cut off, and no colonist need be looked at.
+        /// </summary>
+        static bool SplitsHome(Simulation sim, NavRules<OverlaidBlocks> edited, ConnectivityPreview after, int homeAfter, HashSet<Int3> ends)
+        {
+            if (sim.HomeCell is { } old && edited.IsStandable(old) && after.ComponentOf(old) != homeAfter) return true;
+            foreach (var e in ends)
+                if (sim.Nav.ComponentOf(e) == sim.HomeComponent && after.ComponentOf(e) != homeAfter) return true;
+            return false;
         }
 
         public bool Allows(Colonist worker, Int3 spot) => LeavesWayBack(worker, spot) && !SealsOthers(worker);
@@ -109,9 +128,21 @@ internal static class StrandCheck
     /// </summary>
     internal static bool CutsNothing(Navigation nav, NavRules<OverlaidBlocks> edited, Int3 p)
     {
+        var ends = Ends(nav, edited, p);
+        return ends.Count < 2 || Connected(edited, ends, p);
+    }
+
+    /// <summary>
+    /// The cells that must all still connect for the edit to cut nothing (<see cref="CutsNothing"/>): both ends of every
+    /// move it takes away, and the remaining neighbours of every cell it leaves unstandable (all standable after it).
+    /// Scratch: valid until the next call on this thread.
+    /// </summary>
+    static HashSet<Int3> Ends(Navigation nav, NavRules<OverlaidBlocks> edited, Int3 p)
+    {
         var before = nav.Rules.Core;
         Span<Move> was = stackalloc Move[NavRules.MaxMoves], now = stackalloc Move[NavRules.MaxMoves];
-        var ends = new HashSet<Int3>(); // must all still connect to each other
+        var ends = t_ends ??= new HashSet<Int3>();
+        ends.Clear();
         for (int dy = -MoveReadHeight; dy <= MoveReadHeight; dy++)
             for (int dz = -1; dz <= 1; dz++)
                 for (int dx = -1; dx <= 1; dx++)
@@ -133,7 +164,7 @@ internal static class StrandCheck
                         if (edited.IsStandable(was[i].To)) ends.Add(was[i].To);
                     }
                 }
-        return ends.Count < 2 || Connected(edited, ends, p);
+        return ends;
 
         static bool Has(Span<Move> moves, Int3 to)
         {
@@ -147,9 +178,17 @@ internal static class StrandCheck
     static bool Connected(NavRules<OverlaidBlocks> edited, HashSet<Int3> cells, Int3 p)
     {
         Span<Move> moves = stackalloc Move[NavRules.MaxMoves];
-        var start = cells.First();
-        var seen = new HashSet<Int3> { start };
-        var queue = new Queue<Int3>();
+        Int3 start = default;
+        foreach (var cell in cells)
+        {
+            start = cell;
+            break;
+        }
+        var seen = t_seen ??= new HashSet<Int3>();
+        var queue = t_queue ??= new Queue<Int3>();
+        seen.Clear();
+        queue.Clear();
+        seen.Add(start);
         queue.Enqueue(start);
         int left = cells.Count - 1;
         while (queue.TryDequeue(out var c) && seen.Count < DetourCells)

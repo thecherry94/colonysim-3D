@@ -106,19 +106,25 @@ public sealed class Navigation
     /// <summary>The section's links, one per neighbouring section (the cheapest move to it), ordered by <see cref="SectionLink.ToSection"/>.</summary>
     public IReadOnlyList<SectionLink> SectionLinks(int section) => _links[section];
 
-    /// <summary>How far from the home anchor <see cref="HomeComponent"/> looks for a standable cell.</summary>
+    /// <summary>How far from the home anchor <see cref="HomeCell"/> looks for a standable cell.</summary>
     public const int HomeRadius = 8;
 
     /// <summary>
-    /// The component of the standable cell nearest <paramref name="anchor"/> (within <see cref="HomeRadius"/>), or -1
-    /// if there is none. The search reads the live world, so pending edits are applied first (<see cref="Update"/>) to
+    /// The standable cell nearest <paramref name="anchor"/> (within <see cref="HomeRadius"/>): the cell home's component
+    /// is measured from. The search reads the live world, so pending edits are applied first (<see cref="Update"/>) to
     /// answer from sections that match it.
     /// </summary>
-    public int HomeComponent(Int3 anchor)
+    public bool HomeCell(Int3 anchor, out Int3 cell)
     {
         Update();
-        return Rules.FindStandableNear(anchor, HomeRadius, out var c) ? ComponentOf(c) : -1;
+        return Rules.FindStandableNear(anchor, HomeRadius, out cell);
     }
+
+    /// <summary>The component of <see cref="HomeCell"/>, or -1 if there is none.</summary>
+    public int HomeComponent(Int3 anchor) => HomeCell(anchor, out var c) ? ComponentOf(c) : -1;
+
+    /// <summary>World edits are waiting for <see cref="Update"/>.</summary>
+    public bool HasPendingEdits => _dirty.Count > 0;
 
     /// <summary>
     /// Rebuilds every chunk dirtied since the last call and re-derives the links of their neighbours; then, if any
