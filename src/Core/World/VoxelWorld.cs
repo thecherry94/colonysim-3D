@@ -77,6 +77,14 @@ public sealed class VoxelWorld
         return ChunkAt(x, y, z, out int i).IsDiscovered(i);
     }
 
+    /// <summary>Block and discovery bit with one chunk lookup (the fog hot path); the cell must be in bounds.</summary>
+    internal ushort GetBlockInBounds(int x, int y, int z, out bool discovered)
+    {
+        var c = ChunkAt(x, y, z, out int i);
+        discovered = c.IsDiscovered(i);
+        return c.Get(i);
+    }
+
     public void SetDiscovered(int x, int y, int z, bool markDirty = true)
     {
         if (!InBounds(x, y, z)) return;

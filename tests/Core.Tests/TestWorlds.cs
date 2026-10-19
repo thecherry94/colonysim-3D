@@ -25,6 +25,13 @@ public static class TestWorlds
         return new ColonyMap(new MapSettings(1, size, size, new TerrainParams()), world);
     }
 
+    /// <summary>Sets a cell to air and reveals it, as digging does; air carved below the surface without a reveal reads as solid.</summary>
+    public static void Dig(ColonyMap map, int x, int y, int z)
+    {
+        map.World.SetBlock(x, y, z, Blocks.Air);
+        Discovery.RevealFrom(map.World, x, y, z);
+    }
+
     /// <summary>FNV-1a hash over every block id in the world.</summary>
     public static ulong WorldHash(VoxelWorld w)
     {

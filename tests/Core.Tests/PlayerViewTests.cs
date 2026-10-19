@@ -12,5 +12,10 @@ public class PlayerViewTests
     }
     [Fact] public void FogOff_ShowsActualAir() { var w = TestWorlds.SolidBelow(); w.SetBlock(5, 100, 5, Blocks.Air, false); var v = View(w); v.FogEnabled = false; Assert.Equal(Blocks.Air, v.GetVisibleBlock(5, 100, 5)); }
     [Fact] public void DiscoveredSky_IsAir() { var w = TestWorlds.SolidBelow(); Discovery.InitialFlood(w); Assert.Equal(Blocks.Air, View(w).GetVisibleBlock(5, 200, 5)); }
+    [Fact] public void KnownBlock_StaysFogged_WhenFogOff()
+    {
+        var w = TestWorlds.SolidBelow(); w.SetBlock(5, 100, 5, Blocks.Air, false); var v = View(w); v.FogEnabled = false;
+        Assert.Equal(Blocks.Stone, v.GetKnownBlock(5, 100, 5));
+    }
     [Fact] public void OutOfBounds_IsAir() => Assert.Equal(Blocks.Air, View(TestWorlds.SolidBelow()).GetVisibleBlock(-1, 100, 5));
 }
