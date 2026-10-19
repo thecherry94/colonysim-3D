@@ -25,10 +25,10 @@ public sealed class PathRequest
     /// <summary>When found: the sum of the moves' costs.</summary>
     public float Cost { get; internal set; }
 
-    /// <summary>Cells and sections the search expanded.</summary>
+    /// <summary>Cells and section links the search expanded, over all its restarts.</summary>
     public int NodesExpanded { get; internal set; }
 
-    /// <summary>The <see cref="Navigation.Version"/> when the answer was given.</summary>
+    /// <summary>The <see cref="Navigation.Version"/> the answer was computed on: the one the search last started on, or for an immediate answer the current one.</summary>
     public int NavVersion { get; internal set; }
 
     /// <summary>Set by <see cref="PathService.Cancel"/>; the service drops it unanswered.</summary>

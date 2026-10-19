@@ -17,8 +17,14 @@ namespace ColonySim.Core;
 /// few percent of path cost for far fewer expanded cells.</item>
 /// </list>
 /// A request gives up as <see cref="PathStatus.TooLong"/> after <see cref="NodeLimit"/> expanded nodes (cells and
-/// links). One search runs at a time, in pooled buffers: a search allocates only its result. Main thread only; the
-/// search reads the known world live and the sections as of the last <see cref="Navigation.Update"/>.
+/// links), counted over restarts. One search runs at a time, in pooled buffers: a search allocates only its result.
+/// <para>
+/// Main thread only; the search reads the known world live and the sections as of the last
+/// <see cref="Navigation.Update"/>. When <see cref="Navigation.Version"/> changes between <see cref="Advance"/> calls,
+/// the request is answered at once if it now needs no search (say the goal was walled off), else the search starts
+/// over on the new data; after <see cref="MaxRestarts"/> restarts it finishes on mixed data instead.
+/// <see cref="PathRequest.NavVersion"/> is the version the search last started on.
+/// </para>
 /// </summary>
 public sealed class PathFinder
 {
@@ -37,6 +43,9 @@ public sealed class PathFinder
     /// <summary>Landmark bounds are capped at this many times the octile distance (see <see cref="Estimate"/>).</summary>
     const float LandmarkCap = 3f;
 
+    /// <summary>How often a search starts over when the navigation changes under it, before it just finishes.</summary>
+    const int MaxRestarts = 3;
+
     const float DiagonalExtra = 1.4142f - 1f; // a diagonal's cost over a straight step
     const int Landmarks = NavChunk.Landmarks;
 
@@ -51,7 +60,11 @@ public sealed class PathFinder
 
     PathRequest? _current;
     Phase _phase;
-    int _expanded, _phaseVersion;
+    readonly int _nodeLimit;
+    bool _hierarchical;
+    int _expanded, _restarts;
+    int _startVersion; // the Navigation.Version the search (re)started on: what its answer is stamped with
+    int _seenVersion; // the last version Advance reacted to
 
     // ---- Cell search: nodes, a cell → node map (open addressing, cleared by bumping the stamp) and the open heap.
     struct Node
@@ -92,8 +105,12 @@ public sealed class PathFinder
     float[] _exitV = new float[256], _exitMarks = new float[256 * Landmarks];
     readonly float[] _startMarks = new float[Landmarks], _goalMarks = new float[Landmarks];
 
-    public PathFinder(Navigation nav)
+    public PathFinder(Navigation nav) : this(nav, NodeLimit) { }
+
+    /// <summary>A finder with a smaller node limit, for tests.</summary>
+    internal PathFinder(Navigation nav, int nodeLimit)
     {
+        _nodeLimit = nodeLimit;
         _nav = nav;
         _rules = nav.Rules.Core;
         _world = nav.World;
@@ -135,8 +152,17 @@ public sealed class PathFinder
     {
         _current = r;
         _expanded = 0;
+        _restarts = 0;
+        _hierarchical = hierarchical;
+        Start();
+    }
+
+    void Start()
+    {
+        var r = _current!;
+        _startVersion = _seenVersion = _nav.Version;
         Int3 d = r.To - r.From;
-        if (!hierarchical || Math.Max(Math.Abs(d.X), Math.Max(Math.Abs(d.Y), Math.Abs(d.Z))) <= ShortRange) StartCells(Phase.Open);
+        if (!_hierarchical || Math.Max(Math.Abs(d.X), Math.Max(Math.Abs(d.Y), Math.Abs(d.Z))) <= ShortRange) StartCells(Phase.Open);
         else StartLinks();
     }
 
@@ -154,8 +180,29 @@ public sealed class PathFinder
     internal bool Advance(ref int budget)
     {
         var r = _current ?? throw new InvalidOperationException("No search in progress");
-        // The link search and the corridor use section ids, which an Update since they started may have reassigned.
-        if (_phase != Phase.Open && _nav.Version != _phaseVersion) StartCells(Phase.Open);
+        if (_nav.Version != _seenVersion)
+        {
+            // The navigation changed under the search: answer at once what now needs no search (a goal walled off),
+            // else start over on the new data. Only a few times, so constant edits can't starve a request: after
+            // that the search finishes on mixed data, unrestricted (the corridor's section ids may be stale).
+            _seenVersion = _nav.Version;
+            if (AnswerNow(r))
+            {
+                r.NodesExpanded = _expanded;
+                Abandon();
+                return true;
+            }
+            if (_restarts < MaxRestarts)
+            {
+                _restarts++;
+                Start();
+            }
+            else if (_phase != Phase.Open)
+            {
+                _startVersion = _seenVersion;
+                StartCells(Phase.Open);
+            }
+        }
         while (true)
         {
             var outcome = _phase == Phase.Links ? StepLinks(ref budget) : StepCells(ref budget);
@@ -187,7 +234,8 @@ public sealed class PathFinder
 
     void Done(PathRequest r, PathStatus status)
     {
-        Finish(r, status);
+        r.Status = status;
+        r.NavVersion = _startVersion;
         Abandon();
     }
 
@@ -252,7 +300,7 @@ public sealed class PathFinder
         while (_open.Count > 0)
         {
             if (budget <= 0) return Outcome.OutOfBudget;
-            if (_expanded >= NodeLimit) return Outcome.TooLong;
+            if (_expanded >= _nodeLimit) return Outcome.TooLong;
             int i = _open.Pop();
             if (_nodes[i].Closed) continue; // a stale entry, superseded by a cheaper one
             _nodes[i].Closed = true;
@@ -338,7 +386,6 @@ public sealed class PathFinder
     void StartLinks()
     {
         _phase = Phase.Links;
-        _phaseVersion = _nav.Version;
         var r = _current!;
         _startSection = _nav.SectionOf(r.From);
         _goalSection = _nav.SectionOf(r.To);
@@ -464,7 +511,7 @@ public sealed class PathFinder
         while (_linkOpen.Count > 0)
         {
             if (budget <= 0) return Outcome.OutOfBudget;
-            if (_expanded >= NodeLimit) return Outcome.TooLong;
+            if (_expanded >= _nodeLimit) return Outcome.TooLong;
             if (_linkOpen.PeekF >= _bestStart) return Outcome.Found;
             int p = _linkOpen.Pop();
             if (_linkDone[p] == _linkStamp) continue;

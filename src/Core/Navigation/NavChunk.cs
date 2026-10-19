@@ -36,9 +36,10 @@ internal sealed class NavChunk
 
     /// <summary>
     /// Per key, <see cref="Landmarks"/> costs: the cheapest way from each landmark of the cell's section to the cell,
-    /// by moves inside the chunk (cell i's are at i * Landmarks). By the triangle inequality their differences bound
-    /// the cost between two cells of a section from below (for ways inside the chunk), which is how the pathfinder
-    /// estimates crossing a section. Empty when built without costs (previews).
+    /// by moves inside the chunk (cell i's are at i * Landmarks). Their differences estimate the cost between two cells
+    /// of a section (the triangle inequality), which is how the pathfinder estimates crossing a section. A heuristic,
+    /// not a strict lower bound: costs are asymmetric (water), and a shorter way may leave the chunk. Empty when built
+    /// without costs (previews).
     /// </summary>
     public readonly float[] LandmarkCosts;
 

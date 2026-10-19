@@ -208,28 +208,36 @@ public class PathFinderTests(ITestOutputHelper output)
 
     [Fact] public void LongPath_WithinFactorOfOptimal()
     {
-        var map = MapGenerator.Generate(MapSettings.Create(7, MapSize.Small));
-        var nav = map.Nav;
-        var site = map.StartSite;
-        int home = nav.HomeComponent(new Int3(site.X, site.Level, site.Z));
-        var finder = new PathFinder(nav);
-        var rng = new Random(3);
-        double worst = 0;
-        for (int pairs = 0; pairs < 20;)
+        // Ruling R12: Small seeds 1..5, 20 home-component pairs > 100 apart each, against unrestricted (optimal) A*.
+        var perSeed = new List<double>[5];
+        Parallel.For(0, 5, k =>
         {
-            Int3 a = RandomCellIn(map, home, rng), b = RandomCellIn(map, home, rng);
-            if (Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Z - b.Z)) <= 100) continue;
-            var fast = finder.FindNow(a, b);
-            var best = finder.FindNow(a, b, hierarchical: false);
-            AssertValidPath(nav, fast);
-            AssertValidPath(nav, best);
-            double ratio = fast.Cost / best.Cost;
-            output.WriteLine($"{a} -> {b}: {fast.Cost:F1} ({fast.NodesExpanded} nodes) vs optimal {best.Cost:F1} ({best.NodesExpanded} nodes)");
-            Assert.True(ratio <= 1.25, $"{a} -> {b}: {fast.Cost} vs optimal {best.Cost}");
-            worst = Math.Max(worst, ratio);
-            pairs++;
-        }
-        output.WriteLine($"worst ratio {worst:F3}");
+            int seed = k + 1;
+            var map = MapGenerator.Generate(MapSettings.Create(seed, MapSize.Small));
+            var nav = map.Nav;
+            var site = map.StartSite;
+            int home = nav.HomeComponent(new Int3(site.X, site.Level, site.Z));
+            var finder = new PathFinder(nav);
+            var rng = new Random(seed);
+            var ratios = perSeed[k] = new List<double>();
+            while (ratios.Count < 20)
+            {
+                Int3 a = RandomCellIn(map, home, rng), b = RandomCellIn(map, home, rng);
+                if (Math.Max(Math.Abs(a.X - b.X), Math.Abs(a.Z - b.Z)) <= 100) continue;
+                var fast = finder.FindNow(a, b);
+                var best = finder.FindNow(a, b, hierarchical: false);
+                AssertValidPath(nav, fast);
+                AssertValidPath(nav, best);
+                ratios.Add(fast.Cost / best.Cost);
+            }
+        });
+        var all = perSeed.SelectMany(r => r).OrderBy(r => r).ToList();
+        double mean = all.Average(), p95 = all[(int)Math.Ceiling(0.95 * all.Count) - 1], max = all[^1];
+        for (int k = 0; k < 5; k++) output.WriteLine($"seed {k + 1}: mean {perSeed[k].Average():F3}, max {perSeed[k].Max():F3}");
+        output.WriteLine($"{all.Count} pairs: mean {mean:F3}, p95 {p95:F3}, max {max:F3}");
+        Assert.True(mean <= 1.15, $"mean {mean:F3}");
+        Assert.True(p95 <= 1.25, $"p95 {p95:F3}");
+        Assert.True(max <= 1.40, $"max {max:F3}");
     }
 
     /// <summary>A random column's top standable cell, in the given component.</summary>
@@ -298,6 +306,67 @@ public class PathFinderTests(ITestOutputHelper output)
         AssertValidPath(nav, r);
         Assert.Equal(nav.Version, r.NavVersion);
         Assert.Equal(59f, r.Cost, 3);
+    }
+
+    [Fact] public void Service_GoalWalledOffMidSearch_UnreachableAtOnce()
+    {
+        // Once for a long (hierarchical) request, once for a short (plain A*) one.
+        foreach (var from in new[] { new Int3(2, 151, 32), new Int3(40, 151, 32) })
+        {
+            var m = TestWorlds.FlatMap();
+            var nav = m.Nav;
+            var service = new PathService(nav);
+            Int3 goal = new(61, 151, 32);
+            var r = service.Request(from, goal);
+            service.Process(5);
+            Assert.Equal(PathStatus.Pending, r.Status);
+
+            // Wall the goal's corner of the map off (wooden walls can't be hopped or climbed).
+            for (int y = 151; y <= 152; y++)
+            {
+                for (int z = 29; z <= 35; z++) m.World.SetBlock(58, y, z, Blocks.WoodPlanks);
+                for (int x = 58; x < 64; x++)
+                {
+                    m.World.SetBlock(x, y, 29, Blocks.WoodPlanks);
+                    m.World.SetBlock(x, y, 35, Blocks.WoodPlanks);
+                }
+            }
+            nav.Update();
+            service.Process(500);
+            Assert.Equal(PathStatus.Unreachable, r.Status);
+            Assert.Equal(0, service.Pending);
+            Assert.True(r.NodesExpanded <= 5, $"{r.NodesExpanded} nodes");
+        }
+    }
+
+    [Fact] public void Service_EditDuringPlainSearch_PathValidOnNewData()
+    {
+        var m = TestWorlds.FlatMap();
+        var nav = m.Nav;
+        var service = new PathService(nav);
+        var r = service.Request(new(5, 151, 10), new(30, 151, 10)); // 25 apart: plain cell A*
+        service.Process(5);
+        Assert.Equal(PathStatus.Pending, r.Status);
+
+        for (int z = 0; z <= 30; z++)
+            for (int y = 151; y <= 152; y++) m.World.SetBlock(20, y, z, Blocks.WoodPlanks); // across the straight way
+        nav.Update();
+        while (r.Status == PathStatus.Pending) service.Process(500);
+        AssertValidPath(nav, r); // every move checked against the world after the edit
+        Assert.Contains(r.Moves, mv => mv.To.Z > 30);
+        Assert.Equal(nav.Version, r.NavVersion);
+    }
+
+    [Fact] public void NodeLimit_GivesTooLong()
+    {
+        var m = TestWorlds.FlatMap();
+        var finder = new PathFinder(m.Nav, nodeLimit: 20);
+        foreach (var to in new[] { new Int3(60, 151, 60), new Int3(30, 151, 30) }) // long, then short
+        {
+            var r = finder.FindNow(new(2, 151, 2), to);
+            Assert.Equal((PathStatus.TooLong, 20), (r.Status, r.NodesExpanded));
+            Assert.Empty(r.Moves);
+        }
     }
 
     /// <summary>The timing tests, alone in the Perf collection so no other test competes for the cores.</summary>

@@ -5,9 +5,10 @@ namespace ColonySim.Core;
 /// FIFO order, so many colonists re-pathing at once spread over ticks instead of stalling one. Requests that need no
 /// search (unreachable ends, a cell to itself) are answered by <see cref="Request"/> itself.
 /// <para>
-/// A search spread over calls reads the world as it is at each call: when <see cref="Navigation.Version"/> changes
-/// meanwhile it finishes on the new data, and <see cref="PathRequest.NavVersion"/> records the version at the answer.
-/// Walkers validate each move anyway. Main thread only.
+/// A search spread over calls reacts to <see cref="Navigation.Version"/> changing between them as
+/// <see cref="PathFinder"/> describes: unreachable at once if the edit cut the ends apart, else it starts over on the
+/// new data (a bounded number of times). <see cref="PathRequest.NavVersion"/> records the version the answer was
+/// computed on; walkers validate each move anyway. Main thread only.
 /// </para>
 /// </summary>
 public sealed class PathService(Navigation nav)
