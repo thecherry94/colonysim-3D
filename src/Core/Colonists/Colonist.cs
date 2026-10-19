@@ -3,6 +3,9 @@ namespace ColonySim.Core;
 /// <summary>What a colonist is doing right now.</summary>
 public enum ColonistActivity { Idle, Walking, Working, Falling }
 
+/// <summary>How a colonist's last walk ended: <see cref="None"/> while one is under way (or before the first).</summary>
+public enum WalkResult { None, Arrived, GaveUp }
+
 /// <summary>
 /// A move under way, from feet cell <paramref name="From"/> to <paramref name="To"/>: <paramref name="Elapsed"/> of
 /// <paramref name="TotalTicks"/> ticks done. The colonist's <see cref="Colonist.Cell"/> stays <paramref name="From"/> until it ends.
@@ -36,6 +39,15 @@ public sealed class Colonist(int id, string name)
 
     /// <summary>It can't reach home: refreshed when navigation changes and when it lands from a fall.</summary>
     public bool Stuck { get; set; }
+
+    /// <summary>How its last walk ended.</summary>
+    public WalkResult LastWalk { get; internal set; }
+
+    /// <summary>Where it stands to work its job (<see cref="JobId"/>); the <see cref="ColonistWorker"/>'s.</summary>
+    internal Int3 WorkSpot { get; set; }
+
+    /// <summary>The navigation version its job last passed the <see cref="StrandCheck"/> at.</summary>
+    internal int CheckedAt { get; set; }
 
     /// <summary>Where it is walking and how, while it walks; the <see cref="ColonistMover"/>'s.</summary>
     internal Walk? Walk { get; set; }

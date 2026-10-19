@@ -177,6 +177,62 @@ public class SimulationTests
         Assert.False(walled.Stuck);
     }
 
+    [Fact] public void Walk_ReportsArrivedOrGaveUp()
+    {
+        var map = TestWorlds.FlatMap();
+        var sim = new Simulation(map);
+        var c = sim.Spawn(new Int3(5, 151, 10));
+        sim.GoTo(c, new Int3(8, 151, 10));
+        Assert.Equal(WalkResult.None, c.LastWalk);
+        for (int t = 0; t < 40; t++) sim.Tick();
+        Assert.Equal((new Int3(8, 151, 10), WalkResult.Arrived), (c.Cell, c.LastWalk));
+        sim.GoTo(c, new Int3(15, 140, 10)); // inside the rock
+        for (int t = 0; t < 3; t++) sim.Tick();
+        Assert.Equal(WalkResult.GaveUp, c.LastWalk);
+    }
+
+    [Fact] public void FallDuringWalk_DoesNotUseUpARepath()
+    {
+        var map = TestWorlds.FlatMap();
+        var sim = new Simulation(map);
+        var c = sim.Spawn(new Int3(5, 151, 10));
+        var target = new Int3(20, 151, 10);
+        sim.GoTo(c, target);
+        for (int t = 0; t < 20; t++) sim.Tick();
+        // A pit opens under the cell it is stepping onto, wide enough that its path doesn't go on from the bottom, with
+        // a way out: it falls, lands and walks on from there.
+        int x = c.Motion!.Value.To.X;
+        for (int y = 150; y >= 148; y--)
+            for (int dx = 0; dx <= 2; dx++) TestWorlds.Dig(map, x + dx, y, 10);
+        Run(sim, () => c.Activity == ColonistActivity.Falling, 20);
+        Run(sim, () => c.Activity != ColonistActivity.Falling, 20);
+        Assert.Equal(new Int3(x, 148, 10), c.Cell);
+        Assert.Equal(0, c.Walk?.Repaths);
+        Run(sim, () => c.Activity == ColonistActivity.Idle, 2000);
+        Assert.Equal((target, WalkResult.Arrived), (c.Cell, c.LastWalk));
+    }
+
+    [Fact] public void NoHome_OnlyColonistsWithNowhereToStandAreStuck()
+    {
+        // Home deep in the rock: nothing standable near it.
+        var world = TestWorlds.SolidBelow();
+        Discovery.InitialFlood(world);
+        var map = new ColonyMap(new MapSettings(1, 64, 64, new TerrainParams()), world, site: new StartSite(32, 32, 60));
+        var sim = new Simulation(map);
+        Assert.Equal(-1, sim.HomeComponent);
+        var c = sim.Spawn(new Int3(20, 151, 20));
+        Assert.False(c.Stuck);
+        map.World.SetBlock(20, 152, 20, Blocks.Stone); // over its feet
+        sim.Tick();
+        Assert.True(c.Stuck);
+    }
+
+    static void Run(Simulation sim, Func<bool> until, int maxTicks)
+    {
+        for (int t = 0; t < maxTicks && !until(); t++) sim.Tick();
+        Assert.True(until(), $"not done after {maxTicks} ticks");
+    }
+
     /// <summary>The timing test, alone in the Perf collection so no other test competes for the cores.</summary>
     [Collection(nameof(NavigationTests.Perf))]
     public class Perf(ITestOutputHelper output)

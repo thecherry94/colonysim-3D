@@ -23,6 +23,8 @@ internal sealed class Walk(Int3 target, PathRequest request)
 /// <list type="bullet">
 /// <item>A colonist not mid-motion whose cell isn't standable falls straight down to the first standable cell, 2 ticks per block (stuck if there is none).</item>
 /// <item>A walk follows its path move by move, re-validating each move against the world before making it; an invalid one means a new path to the same target, at most <see cref="MaxRepaths"/> times, then it gives up and idles.</item>
+/// <item>A fall during a walk asks for a new path from where it lands; that doesn't count as one of the re-paths.</item>
+/// <item>How the last walk ended is left in <see cref="Colonist.LastWalk"/>.</item>
 /// <item>A motion whose destination turns solid on the way is called off: the colonist stays where it was.</item>
 /// </list>
 /// </summary>
@@ -38,15 +40,17 @@ internal sealed class ColonistMover(Simulation sim)
         Stop(c);
         // Mid-motion, the path starts where the motion ends.
         c.Walk = new Walk(target, sim.Paths.Request(c.Motion?.To ?? c.Cell, target));
+        c.LastWalk = WalkResult.None;
         if (c.Activity != ColonistActivity.Falling) c.Activity = ColonistActivity.Walking;
     }
 
-    /// <summary>Drops the colonist's walk, if any; a motion under way still finishes.</summary>
+    /// <summary>Drops the colonist's walk, if any, as given up; a motion under way still finishes.</summary>
     public void Stop(Colonist c)
     {
         if (c.Walk is not { } w) return;
         sim.Paths.Cancel(w.Request);
         c.Walk = null;
+        c.LastWalk = WalkResult.GaveUp;
         if (c.Activity == ColonistActivity.Walking) c.Activity = ColonistActivity.Idle;
     }
 
@@ -84,6 +88,7 @@ internal sealed class ColonistMover(Simulation sim)
         {
             c.Activity = c.Walk != null ? ColonistActivity.Walking : ColonistActivity.Idle;
             c.Stuck = sim.IsStuck(c.Cell); // it may have landed somewhere else entirely
+            if (c.Walk is { } fell) NewPath(c, fell); // from where it landed, without using up a re-path
         }
         else if (c.Walk is { Moving: true } w)
         {
@@ -122,6 +127,7 @@ internal sealed class ColonistMover(Simulation sim)
             else
             {
                 c.Walk = null;
+                c.LastWalk = WalkResult.Arrived;
                 c.Activity = ColonistActivity.Idle;
             }
             return;
@@ -143,8 +149,15 @@ internal sealed class ColonistMover(Simulation sim)
             return;
         }
         w.Repaths++;
+        NewPath(c, w);
+    }
+
+    void NewPath(Colonist c, Walk w)
+    {
+        sim.Paths.Cancel(w.Request);
         w.Request = sim.Paths.Request(c.Cell, w.Target);
         w.Next = 0;
+        w.Moving = false;
     }
 
     /// <summary>A 2-tall colonist fits with its feet at <paramref name="cell"/>.</summary>

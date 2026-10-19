@@ -62,4 +62,62 @@ public class JobQueueTests
         q.AddProgress(a, 3); q.ConsumeChangedChunks(got); Assert.Empty(got);
         q.Release(a); q.ConsumeChangedChunks(got); Assert.Single(got);
     }
+
+    [Fact] public void ByRing_AllRings_YieldEveryJobOnceInRingOrder()
+    {
+        var q = new JobQueue();
+        var rng = new Random(4);
+        for (int i = 0; i < 400; i++) q.Add(new JobSpec(new(rng.Next(512), rng.Next(256), rng.Next(512)), JobKind.Dig, Blocks.Air));
+        var from = new Int3(200, 100, 300);
+        var c = JobQueue.ChunkOf(from);
+        int Ring(Job j) { var d = JobQueue.ChunkOf(j.Position) - c; return Math.Max(Math.Abs(d.X), Math.Max(Math.Abs(d.Y), Math.Abs(d.Z))); }
+        var all = q.ByRing(from, q.MaxRing).ToList();
+        Assert.Equal(q.Count, all.Distinct().Count());
+        Assert.Equal(q.Count, all.Count);
+        Assert.Equal(all.Select(Ring).OrderBy(r => r), all.Select(Ring));
+        var ready = new List<Job>();
+        for (int r = 0; r <= q.MaxRing; r++)
+        {
+            int before = ready.Count;
+            q.ReadyInRing(from, r, [JobKind.Dig], ready);
+            Assert.All(ready.Skip(before), j => Assert.Equal(r, Ring(j)));
+        }
+    }
+
+    [Fact] public void Readiness_DigsTopDown_BuildsBottomUp_TrackedThroughChanges()
+    {
+        // Random adds, replacements and removals in a small box; after each, readiness must match the rule worked out
+        // from scratch, and the ready lists must hold exactly the ready jobs.
+        var q = new JobQueue();
+        var rng = new Random(9);
+        var kinds = new[] { JobKind.Dig, JobKind.CarveStairs, JobKind.BuildWall, JobKind.BuildFloor };
+        for (int step = 0; step < 3000; step++)
+        {
+            var p = new Int3(30 + rng.Next(4), 30 + rng.Next(8), 30 + rng.Next(4)); // across a chunk border in x, y and z
+            if (rng.Next(3) == 0) q.Remove(p);
+            else q.Add(new JobSpec(p, kinds[rng.Next(kinds.Length)], (ushort)rng.Next(1, 3)));
+            if (step % 50 != 0) continue;
+
+            bool IsDig(JobKind k) => k is JobKind.Dig or JobKind.CarveStairs;
+            bool Ready(Job j)
+            {
+                var o = j.Position;
+                if (IsDig(j.Kind))
+                    return Enumerable.Range(1, 3).All(k => !(q.TryGet(o + new Int3(0, k, 0), out var a) && IsDig(a.Kind)));
+                for (int k = 1; k <= 4; k++)
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                            if (q.TryGet(o + new Int3(dx, -k, dz), out var b) && !IsDig(b.Kind)) return false;
+                return true;
+            }
+            var expected = q.All.Where(Ready).ToHashSet();
+            var listed = new List<Job>();
+            for (int r = 0; r <= q.MaxRing; r++) q.ReadyInRing(new Int3(31, 33, 31), r, Enum.GetValues<JobKind>(), listed);
+            Assert.Equal(expected.Count, q.ReadyCount);
+            Assert.All(kinds, k => Assert.Equal(expected.Count(j => j.Kind == k), q.ReadyOfKind(k)));
+            Assert.Equal(expected.Count, listed.Count);
+            Assert.True(expected.SetEquals(listed));
+            Assert.All(q.All, j => Assert.Equal(expected.Contains(j), WorkRules.IsReady(null!, j)));
+        }
+    }
 }

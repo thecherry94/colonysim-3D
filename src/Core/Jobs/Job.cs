@@ -24,4 +24,10 @@ public sealed class Job
     public int StatusVersion { get; internal set; }
 
     public JobSpec Spec => new(Position, Kind, Block);
+
+    /// <summary>Jobs that must go before this one (<see cref="JobQueue"/>'s work order); ready to work at 0.</summary>
+    internal int WaitingFor { get; set; }
+
+    /// <summary>Its index in its chunk's ready list, or -1 while it waits (or is out of the queue).</summary>
+    internal int ReadyIndex { get; set; } = -1;
 }

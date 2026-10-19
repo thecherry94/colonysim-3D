@@ -5,7 +5,8 @@ public static class WorkCompletion
 {
     /// <summary>
     /// Applies the job's effect and removes it. Returns false if the job no longer made sense against the real world
-    /// (it is removed anyway).
+    /// (it is removed anyway), and also for a build into a cell a colonist's body is in: that one waits, so the job is
+    /// kept and nothing is placed.
     /// </summary>
     public static bool Complete(ColonyMap map, Job job)
     {
@@ -29,11 +30,25 @@ public static class WorkCompletion
                 break;
             default:
                 ushort now = w.GetBlock(p.X, p.Y, p.Z);
-                if (now == Blocks.Air || now == Blocks.Water) w.SetBlock(p.X, p.Y, p.Z, job.Block);
-                else valid = false;
+                if (now != Blocks.Air && now != Blocks.Water) valid = false;
+                else if (IsOccupied(map, p)) return false;
+                else w.SetBlock(p.X, p.Y, p.Z, job.Block);
                 break;
         }
         map.Jobs.Remove(p);
         return valid;
+    }
+
+    /// <summary>A colonist's body (its cell and the one above, at either end of a move under way) is in the cell.</summary>
+    public static bool IsOccupied(ColonyMap map, Int3 cell)
+    {
+        foreach (var c in map.Colony.Colonists)
+        {
+            if (Overlaps(c.Cell, cell)) return true;
+            if (c.Motion is { } m && Overlaps(m.To, cell)) return true;
+        }
+        return false;
+
+        static bool Overlaps(Int3 feet, Int3 cell) => cell == feet || cell == feet + Int3.Up;
     }
 }
