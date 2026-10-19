@@ -42,12 +42,13 @@ public partial class CameraRig : Node3D
         AddChild(Camera);
     }
 
-    /// <summary>Starts at the map center, focused at the surface there.</summary>
+    /// <summary>Starts at the start site (the map center when there is none), focused at the surface there.</summary>
     public void Setup(ColonyMap map)
     {
         _map = map;
-        _focusX = map.World.SizeX / 2f;
-        _focusZ = map.World.SizeZ / 2f;
+        bool hasSite = map.StartSite != default;
+        _focusX = hasSite ? map.StartSite.X + 0.5f : map.World.SizeX / 2f;
+        _focusZ = hasSite ? map.StartSite.Z + 0.5f : map.World.SizeZ / 2f;
         _sliced = false;
         FocusY = _targetY = SurfaceAtFocus() + 1;
         UpdateTransform();

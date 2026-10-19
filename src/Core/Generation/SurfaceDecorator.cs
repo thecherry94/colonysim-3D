@@ -1,13 +1,13 @@
 namespace ColonySim.Core;
 
-/// <summary>Trees (oak and pine) and boulders on grass. Candidates sit on a jittered grid; runs sequentially after caves and ores.</summary>
+/// <summary>Trees (oak and pine) and boulders on grass, none near the start site. Candidates sit on a jittered grid; runs sequentially after caves and ores.</summary>
 public static class SurfaceDecorator
 {
     const int Cell = 5;
     const int PineLine = 160;
     const float BoulderChance = 0.006f;
 
-    public static void Decorate(VoxelWorld world, MapSettings s)
+    public static void Decorate(VoxelWorld world, MapSettings s, StartSite site)
     {
         var forest = HeightField.Noise(s.Seed, 21, 0.01f, FastNoiseLite.FractalType.FBm, 3);
         var pines = HeightField.Noise(s.Seed, 22, 0.02f, FastNoiseLite.FractalType.None, 1);
@@ -17,6 +17,7 @@ public static class SurfaceDecorator
                 int x = gx * Cell + (int)(Hash.Of(s.Seed, gx, 101, gz) % Cell);
                 int z = gz * Cell + (int)(Hash.Of(s.Seed, gx, 102, gz) % Cell);
                 if (x >= world.SizeX || z >= world.SizeZ) continue;
+                if (NearSite(site, x, z)) continue;
                 var rng = new Random(unchecked((int)Hash.Of(s.Seed, x, 103, z)));
                 if (rng.NextSingle() < ForestDensity(forest.GetNoise(x, z)))
                 {
@@ -27,6 +28,14 @@ public static class SurfaceDecorator
                 else if (rng.NextSingle() < BoulderChance)
                     Boulder(world, rng, x, z);
             }
+    }
+
+    /// <summary>Crowns reach up to 3 blocks and boulders spill 1 beside the candidate, so the margin keeps everything out of the start clearing.</summary>
+    static bool NearSite(StartSite site, int x, int z)
+    {
+        int r = StartSiteFinder.ClearRadius + 3;
+        int dx = x - site.X, dz = z - site.Z;
+        return dx * dx + dz * dz <= r * r;
     }
 
     /// <summary>Clearings where the noise is low, dense woods where it is high.</summary>

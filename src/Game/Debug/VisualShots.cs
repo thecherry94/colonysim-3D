@@ -47,6 +47,17 @@ public partial class VisualShots : Node
         return
         [
             ("overview", () => Task.CompletedTask),
+            // The flattened clearing seen from above, then natural slopes on hilly ground up close.
+            ("start_site", () =>
+            {
+                var site = _scene.Map.StartSite;
+                return View(site.X, site.Z, _scene.Slice.TopLevel, 0, 50, 60);
+            }),
+            ("slopes_closeup", () =>
+            {
+                var (sx, sz) = SlopeRichColumn();
+                return View(sx, sz, _scene.Slice.TopLevel, 20, 35, 30);
+            }),
             ("overview_full", MeasureOverviewFps),
             (null, RecordGeneratedHash),
             (null, CheckDebugOverlay),
@@ -113,6 +124,33 @@ public partial class VisualShots : Node
             ("cave_hidden", () => FindHiddenCave(house)),
             ("cave_revealed", RevealCave),
         ];
+    }
+
+    /// <summary>The center of the 12×12 window with the most natural slope blocks, searched on a coarse grid away from the map border (gentle, dry ground only).</summary>
+    (int X, int Z) SlopeRichColumn()
+    {
+        var w = _scene.Map.World;
+        const int window = 12;
+        (int X, int Z) best = (w.SizeX / 2, w.SizeZ / 2);
+        int bestCount = -1;
+        const int edge = 40; // keep the view off the map border
+        for (int z0 = edge; z0 + window + edge <= w.SizeZ; z0 += 6)
+            for (int x0 = edge; x0 + window + edge <= w.SizeX; x0 += 6)
+            {
+                int count = 0, lo = int.MaxValue, hi = int.MinValue;
+                for (int z = z0; z < z0 + window; z++)
+                    for (int x = x0; x < x0 + window; x++)
+                    {
+                        int h = w.GetSurfaceHeight(x, z);
+                        lo = Math.Min(lo, h);
+                        hi = Math.Max(hi, h);
+                        if (Blocks.Registry.Get(w.GetBlock(x, h + 1, z)).IsSlope) count++;
+                    }
+                if (hi - lo > 6 || lo <= _scene.Map.Settings.Terrain.WaterLevel + 1) continue; // gently rolling, dry ground
+                if (count > bestCount) { bestCount = count; best = (x0 + window / 2, z0 + window / 2); }
+            }
+        Metric("slope_window_count", bestCount);
+        return best;
     }
 
     public void Setup(MapScene scene, string dir)
@@ -318,8 +356,10 @@ public partial class VisualShots : Node
                         int h = world.GetSurfaceHeight(x + dx, z + dz);
                         lo = Math.Min(lo, h);
                         hi = Math.Max(hi, h);
+                        // Natural slope blocks at ground level are fine: the scenarios clear them (ClearSlopes).
                         for (int y = h + 1; y <= h + clearance && clear; y++)
-                            clear = world.GetBlock(x + dx, y, z + dz) == Blocks.Air;
+                            clear = world.GetBlock(x + dx, y, z + dz) == Blocks.Air
+                                || (y == h + 1 && Blocks.Registry.Get(world.GetBlock(x + dx, y, z + dz)).IsSlope);
                     }
                 if (!clear) continue;
                 long cx = x + w / 2 - world.SizeX / 2, cz = z + d / 2 - world.SizeZ / 2;
@@ -330,6 +370,18 @@ public partial class VisualShots : Node
         return best;
     }
 
+    /// <summary>Removes the natural slope blocks resting on the site's ground (plus a 2-block margin), so scenarios start from a bare surface.</summary>
+    void ClearSlopes(Site s, int w, int d)
+    {
+        var world = _scene.Map.World;
+        for (int z = s.Z - 2; z <= s.Z + d + 1; z++)
+            for (int x = s.X - 2; x <= s.X + w + 1; x++)
+            {
+                int y = world.GetSurfaceHeight(x, z) + 1;
+                if (Blocks.Registry.Get(world.GetBlock(x, y, z)).IsSlope) world.SetBlock(x, y, z, Blocks.Air);
+            }
+    }
+
     /// <summary>
     /// Flattens the site (plus a 2-block margin) down to its lowest ground, so synthetic clicks aimed at the top face
     /// of a cell can't land on a neighboring higher block. Removed blocks are open to the sky, so they are discovered.
@@ -337,6 +389,7 @@ public partial class VisualShots : Node
     async Task<Site> LevelSite(Site s, int w, int d)
     {
         var world = _scene.Map.World;
+        ClearSlopes(s, w, d);
         int lo = int.MaxValue;
         for (int z = s.Z - 2; z <= s.Z + d + 1; z++)
             for (int x = s.X - 2; x <= s.X + w + 1; x++)
@@ -365,6 +418,7 @@ public partial class VisualShots : Node
     async Task Designations(Site s)
     {
         var map = _scene.Map;
+        ClearSlopes(s, HouseSiteW, HouseSiteD);
         int h = s.H, x0 = s.X, z0 = s.Z, px = s.X + PitOffsetX;
         Designator.Apply(map, DesignationTool.Wall, BuildMaterial.Stone, new DragBox(new(x0, h + 1, z0), new(x0 + 8, h + 3, z0 + 6)));
         Designator.Apply(map, DesignationTool.Floor, BuildMaterial.Wood, new DragBox(new(x0, h + 4, z0), new(x0 + 8, h + 4, z0 + 6)));

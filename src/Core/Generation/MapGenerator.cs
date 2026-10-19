@@ -2,7 +2,7 @@ namespace ColonySim.Core;
 
 public readonly record struct GenerationProgress(string Stage, float Fraction);
 
-/// <summary>Full map generation: height field, ground and water, caves, ores, trees, then the initial discovery flood.</summary>
+/// <summary>Full map generation: height field, ground and water, caves, ores, trees, slopes, then the initial discovery flood.</summary>
 public static class MapGenerator
 {
     public static ColonyMap Generate(MapSettings s, IProgress<GenerationProgress>? progress = null, CancellationToken ct = default)
@@ -10,6 +10,10 @@ public static class MapGenerator
         progress?.Report(new("Shaping terrain", 0f));
         var heights = HeightField.Generate(s).Heights;
         ct.ThrowIfCancellationRequested();
+
+        progress?.Report(new("Choosing a start site", 0.1f));
+        var (siteX, siteZ) = StartSiteFinder.Find(heights, s);
+        var site = new StartSite(siteX, siteZ, StartSiteFinder.Flatten(heights, s, siteX, siteZ) + 1);
 
         var world = new VoxelWorld(s.SizeX, s.SizeZ);
         var layers = new TerrainLayers(s);
@@ -29,13 +33,17 @@ public static class MapGenerator
         ct.ThrowIfCancellationRequested();
 
         progress?.Report(new("Growing trees", 0.65f));
-        SurfaceDecorator.Decorate(world, s);
+        SurfaceDecorator.Decorate(world, s, site);
+        ct.ThrowIfCancellationRequested();
+
+        progress?.Report(new("Smoothing slopes", 0.68f));
+        SlopePlacer.Place(world, s);
         ct.ThrowIfCancellationRequested();
 
         progress?.Report(new("Exploring", 0.7f));
         Discovery.InitialFlood(world);
 
         progress?.Report(new("Done", 1f));
-        return new ColonyMap(s, world);
+        return new ColonyMap(s, world, site: site);
     }
 }
