@@ -66,6 +66,10 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
     const byte NaturalSolid = SolidBit | NaturalBit;
     const byte OutOfBounds = SolidBit; // impassable, and never natural, a ladder or liquid
 
+    // Move costs on dry ground (a liquid destination triples them).
+    const float WalkCost = 1.0f, DiagonalCost = 1.4142f, StepCost = 1.5f, LadderCost = 2.0f, HopCost = 6.0f;
+    static float ClimbCost(int k) => 10f + 4 * k;
+
     // Per block id, from the (immutable) registry: shape flags, and one bit per Facing the block ascends toward.
     static readonly byte[] Flags, AscendMask;
 
@@ -203,13 +207,24 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
         }
     }
 
-    /// <summary>The cost of the way back along <paramref name="move"/> (made from <paramref name="from"/>): the same move, with the liquid factor of the other end.</summary>
+    /// <summary>
+    /// The cost of the way back along <paramref name="move"/> (made from <paramref name="from"/>): the same kind of move,
+    /// with the liquid factor of <paramref name="from"/>. Computed as <see cref="GetMoves"/> computes it, so it is
+    /// exactly the cost of the move back.
+    /// </summary>
     public float ReverseCost(Int3 from, Move move)
     {
-        float cost = move.Cost;
-        if ((At(move.To) & LiquidBit) != 0) cost /= 3;
-        if ((At(from) & LiquidBit) != 0) cost *= 3;
-        return cost;
+        float cost = move.Kind switch
+        {
+            MoveKind.Walk => WalkCost,
+            MoveKind.Diagonal => DiagonalCost,
+            MoveKind.Step => StepCost,
+            MoveKind.Ladder => LadderCost,
+            MoveKind.Hop => HopCost,
+            MoveKind.Climb => ClimbCost(Math.Abs(move.To.Y - from.Y)),
+            _ => throw new ArgumentException($"{move.Kind} is not a navigation move", nameof(move)),
+        };
+        return (At(from) & LiquidBit) != 0 ? cost * 3 : cost;
     }
 
     ushort Known(Int3 c) => _world.InBounds(c.X, c.Y, c.Z) ? KnownInBounds(c) : Blocks.Air;
@@ -244,7 +259,7 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
     /// <summary>Level with the standable origin, so <paramref name="to"/> is in y range and in bounds whenever its feet are passable.</summary>
     static void Walk(Int3 to, byte feet, byte head, byte below, Span<Move> into, ref int n)
     {
-        if (Stands(feet, head, below)) Add(into, ref n, to, feet, MoveKind.Walk, 1.0f, 6);
+        if (Stands(feet, head, below)) Add(into, ref n, to, feet, MoveKind.Walk, WalkCost, 6);
     }
 
     /// <summary>
@@ -255,7 +270,7 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
     {
         if ((open & (1 << (int)sx)) == 0 || (open & (1 << (int)sz)) == 0) return;
         Int3 d = c + sx.Offset() + sz.Offset();
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Diagonal, 1.4142f, 8);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Diagonal, DiagonalCost, 8);
     }
 
     void StepUp(Int3 c, Facing dir, Span<Move> into, ref int n)
@@ -263,28 +278,28 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
         Int3 ahead = c + dir.Offset();
         if (!Ascends(Known(ahead), dir)) return;
         Int3 d = ahead + Int3.Up;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Step, 1.5f, 8);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Step, StepCost, 8);
     }
 
     void StepDown(Int3 c, Facing dir, Span<Move> into, ref int n)
     {
         if (!Ascends(Known(c + Int3.Down), dir.Opposite())) return;
         Int3 d = c + dir.Offset() + Int3.Down;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Step, 1.5f, 8);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Step, StepCost, 8);
     }
 
     void LadderUp(Int3 c, byte here, Span<Move> into, ref int n)
     {
         if ((here & LadderBit) == 0) return;
         Int3 d = c + Int3.Up;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Ladder, 2.0f, 10);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Ladder, LadderCost, 10);
     }
 
     void LadderDown(Int3 c, byte under, Span<Move> into, ref int n)
     {
         if ((under & LadderBit) == 0) return;
         Int3 d = c + Int3.Down;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Ladder, 2.0f, 10);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Ladder, LadderCost, 10);
     }
 
     /// <summary>Onto a natural block one up that is not a step that way, with head room above the hopper.</summary>
@@ -295,7 +310,7 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
         if ((Flags[id] & NaturalSolid) != NaturalSolid || Ascends(id, dir)) return;
         if (!IsPassable(c + Int3.Up * 2)) return;
         Int3 d = ahead + Int3.Up;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Hop, 6.0f, 20);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Hop, HopCost, 20);
     }
 
     /// <summary>The reverse of <see cref="HopUp"/>: off a natural block, with head room above the landing.</summary>
@@ -306,7 +321,7 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
         Int3 o = dir.Offset();
         if (!IsPassable(c + o + Int3.Up)) return;
         Int3 d = c + o + Int3.Down;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Hop, 6.0f, 20);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Hop, HopCost, 20);
     }
 
     /// <summary>Up a natural face <paramref name="k"/> blocks high, with the column above the climber open to k+1 up.</summary>
@@ -318,7 +333,7 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
         for (int j = 2; j <= k + 1; j++)
             if (!IsPassable(c + Int3.Up * j)) return;
         Int3 d = c + o + Int3.Up * k;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Climb, 10f + 4 * k, 30 * k);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Climb, ClimbCost(k), 30 * k);
     }
 
     /// <summary>The exact reverse of <see cref="ClimbUp"/>, seen from the top.</summary>
@@ -330,6 +345,6 @@ internal sealed class NavRules<TBlocks>(TBlocks blocks) where TBlocks : struct, 
             if (!IsNaturalSolid(face + Int3.Up * j)) return;
         for (int j = 2; j <= k + 1; j++)
             if (!IsPassable(d + Int3.Up * j)) return;
-        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Climb, 10f + 4 * k, 30 * k);
+        if (IsStandable(d, out byte feet)) Add(into, ref n, d, feet, MoveKind.Climb, ClimbCost(k), 30 * k);
     }
 }

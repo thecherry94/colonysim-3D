@@ -229,7 +229,7 @@ public sealed class Navigation
             int ci = _sectionChunk[s];
             if (ci < 0 || _chunkMark[ci]) continue;
             foreach (var link in _links[s])
-                if (link.ToSection > s && !_chunkMark[_sectionChunk[link.ToSection]]) UnionFind.Union(parent, s, link.ToSection);
+                if (!_chunkMark[_sectionChunk[link.ToSection]]) UnionFind.Union(parent, s, link.ToSection);
         }
         for (int k = 0; k < chunks.Count; k++)
             foreach (var m in chunks[k].Cross)
@@ -373,8 +373,7 @@ public sealed class Navigation
         if (_component.Length < _sectionCount) _component = new int[_sectionChunk.Length];
         for (int s = 0; s < _sectionCount; s++) _parent[s] = s;
         for (int s = 0; s < _sectionCount; s++)
-            foreach (var link in _links[s])
-                if (link.ToSection > s) UnionFind.Union(_parent, s, link.ToSection); // links come in pairs
+            foreach (var link in _links[s]) UnionFind.Union(_parent, s, link.ToSection);
         for (int s = 0; s < _sectionCount; s++) _component[s] = _sectionChunk[s] < 0 ? -1 : UnionFind.Find(_parent, s);
     }
 }

@@ -93,6 +93,33 @@ public class NavigationTests
                 Assert.Equal(l.ToSection, nav.SectionOf(l.To));
                 Assert.True(nav.Rules.TryGetMove(l.From, l.To, out var mv), $"link {l.From} -> {l.To} is no move");
                 Assert.Equal(mv.Cost, l.Cost, 3);
+                Assert.Contains(nav.SectionLinks(l.ToSection), back => back.ToSection == s);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The incrementally kept links equal a fresh build's, cost for cost: the cheapest move per section pair. Sections are
+    /// paired through their member cells (builds are deterministic, so both have the same cell sets, under other ids).
+    /// </summary>
+    static void AssertLinksMatchFreshBuild(ColonyMap m, Navigation nav, Dictionary<Int3, int> truth, string context)
+    {
+        var fresh = new Navigation(m);
+        var seen = new HashSet<int>();
+        foreach (var c in truth.Keys)
+        {
+            int s = nav.SectionOf(c);
+            if (!seen.Add(s)) continue;
+            int fs = fresh.SectionOf(c);
+            var expected = fresh.SectionLinks(fs);
+            var actual = nav.SectionLinks(s);
+            Assert.True(expected.Count == actual.Count, $"{context}: section at {c} has {actual.Count} links, a fresh build {expected.Count}");
+            foreach (var l in actual)
+            {
+                int ft = fresh.SectionOf(l.To);
+                var match = expected.Where(e => e.ToSection == ft).ToList();
+                Assert.True(match.Count == 1, $"{context}: link {l.From} -> {l.To} has no fresh counterpart");
+                Assert.True(match[0].Cost == l.Cost, $"{context}: link {l.From} -> {l.To} costs {l.Cost}, fresh {match[0].Cost}");
             }
         }
     }
@@ -115,6 +142,7 @@ public class NavigationTests
             var truth = BruteForce(m);
             AssertSamePartition(truth, nav.ComponentOf, $"after edit {i}");
             AssertSectionsConsistent(nav, truth);
+            AssertLinksMatchFreshBuild(m, nav, truth, $"after edit {i}");
         }
     }
 

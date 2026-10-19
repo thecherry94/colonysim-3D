@@ -243,6 +243,8 @@ public class NavRulesTests(ITestOutputHelper output)
                             if (moves[j].To == mv.To) failures.Add($"duplicate destination {a} -> {mv.To}");
                         if (!nav.TryGetMove(mv.To, a, out var back)) failures.Add($"{a} -> {mv.To} ({mv.Kind}) has no way back");
                         else if (back.Kind != mv.Kind) failures.Add($"{a} -> {mv.To} is {mv.Kind}, back is {back.Kind}");
+                        else if (nav.Core.ReverseCost(a, mv) != back.Cost)
+                            failures.Add($"{a} -> {mv.To}: ReverseCost {nav.Core.ReverseCost(a, mv)} but the move back costs {back.Cost}");
                     }
                 }
         output.WriteLine($"standable {standable}; " + string.Join(", ", Enum.GetValues<MoveKind>().Select(k => $"{k} {kinds[(int)k]}")));
