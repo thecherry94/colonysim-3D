@@ -63,7 +63,9 @@ public static class HeightField
                 if (t.HasRiver)
                 {
                     int a = alongX ? x : z, b = alongX ? z : x;
-                    float d = Math.Abs(b - center[a]);
+                    // Distance across the flow, not along the grid axis: a slanted river would otherwise run narrow.
+                    float slope = (center[Math.Min(a + 1, along - 1)] - center[Math.Max(a - 1, 0)]) / (Math.Min(a + 1, along - 1) - Math.Max(a - 1, 0));
+                    float d = Math.Abs(b - center[a]) * MathF.Cos(MathF.Atan(slope));
                     if (d < halfWidth + BankWidth)
                     {
                         float k = d <= halfWidth ? 0f : Smooth((d - halfWidth) / BankWidth);

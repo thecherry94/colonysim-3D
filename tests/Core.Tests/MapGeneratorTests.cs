@@ -25,7 +25,10 @@ public class MapGeneratorTests
         for (int x = 0; x < 128; x++) for (int z = 0; z < 128; z++) for (int y = 0; y < 256; y++)
         {
             var b = w.GetBlock(x, y, z); var band = OrePlacer.Bands.FirstOrDefault(o => o.Block == b);
-            if (band is null) continue; seen.Add(b); Assert.InRange(y, band.MinY, band.MaxY);
+            if (band is null) continue; seen.Add(b);
+            // Cave-side iron may climb above its band, up to the surface minus the cave roof.
+            int max = b == Blocks.IronOre ? Math.Max(band.MaxY, w.GetSurfaceHeight(x, z) - S.Terrain.CaveRoof) : band.MaxY;
+            Assert.InRange(y, band.MinY, max);
         }
         Assert.Equal(OrePlacer.Bands.Count, seen.Count);
     }

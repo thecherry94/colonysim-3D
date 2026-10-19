@@ -123,6 +123,7 @@ public partial class VisualShots : Node
             (null, () => ShowOverlayKinds(house)),
             ("cave_hidden", () => FindHiddenCave(house)),
             ("cave_revealed", RevealCave),
+            ("cave_shallow", ShallowCave),
         ];
     }
 
@@ -619,6 +620,34 @@ public partial class VisualShots : Node
         if (bestDepth == int.MaxValue) throw new InvalidOperationException("no hidden cave found");
         Metric("cave", $"({_cave.X},{_cave.Y},{_cave.Z}) depth:{bestDepth} hidden_nearby:{HiddenAround(_cave.X, _cave.Y, _cave.Z)}");
         return View(_cave.X, _cave.Z, _cave.Y, 0, 60, 30);
+    }
+
+    /// <summary>
+    /// <c>cave_shallow</c>: a slice 20 below the surface over the roomiest shallow cave (the 24×24 window with the most air
+    /// at that depth, dry non-mountain ground), fog off, so the wide tunnels and their coal and iron show.
+    /// </summary>
+    async Task ShallowCave()
+    {
+        var w = _scene.Map.World;
+        const int depth = 20, half = 12, margin = 30;
+        var t = _scene.Map.Settings.Terrain;
+        (int X, int Z, int Y) best = (w.SizeX / 2, w.SizeZ / 2, 0);
+        int bestAir = -1;
+        for (int z = margin; z < w.SizeZ - margin; z += 4)
+            for (int x = margin; x < w.SizeX - margin; x += 4)
+            {
+                int h = w.GetSurfaceHeight(x, z);
+                if (h <= t.WaterLevel || h >= t.MountainRockLine) continue;
+                int y = h - depth, air = 0;
+                for (int dz = -half; dz < half; dz++)
+                    for (int dx = -half; dx < half; dx++)
+                        if (w.GetBlock(x + dx, y, z + dz) == Blocks.Air && w.GetSurfaceHeight(x + dx, z + dz) - y >= depth - 4) air++;
+                if (air > bestAir) { bestAir = air; best = (x, z, y); }
+            }
+        Metric("cave_shallow", $"({best.X},{best.Y},{best.Z}) air_cells_in_window:{bestAir}");
+        _scene.Slice.FogEnabled = false;
+        await WaitForRemesh();
+        await View(best.X, best.Z, best.Y, 20, 50, 22);
     }
 
     int HiddenAround(int cx, int cy, int cz)

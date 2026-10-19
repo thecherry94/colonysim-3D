@@ -32,6 +32,16 @@ public static class TestWorlds
         Discovery.RevealFrom(map.World, x, y, z);
     }
 
+    /// <summary>Marks every non-solid cell discovered, so navigation sees the whole real world (undiscovered space reads as solid).</summary>
+    public static void RevealAll(VoxelWorld w)
+    {
+        var solid = Blocks.Registry.All.Select(d => d.IsSolid).ToArray();
+        for (int y = 0; y < w.SizeY; y++)
+            for (int z = 0; z < w.SizeZ; z++)
+                for (int x = 0; x < w.SizeX; x++)
+                    if (!solid[w.GetBlock(x, y, z)]) w.SetDiscovered(x, y, z, markDirty: false);
+    }
+
     /// <summary>FNV-1a hash over every block id in the world.</summary>
     public static ulong WorldHash(VoxelWorld w)
     {

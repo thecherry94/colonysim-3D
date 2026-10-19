@@ -10,13 +10,25 @@ public sealed class CaveCarver
     const int MinY = 6;
     const int MountainRoof = 2;
     const int CavernDepth = 12;
-    const float TunnelWidth = 0.0045f;
+    // Depth below the local surface shapes the tunnels: roomy and tall in the shallow band (where colonists work),
+    // tight, squat and broken up past DeepFrom. Between the two everything is interpolated.
+    const int ShallowTo = 40, DeepFrom = 90;
+    const float ShallowWidth = 0.018f, DeepWidth = 0.0025f;       // threshold on a² + b²
+    const float TallSquash = 1.2f, FlatSquash = 1.7f;              // noise y scale: lower stretches tunnels vertically
+    const float DeepBreakup = 0.05f;                               // fully deep tunnels need the cavern noise above this, leaving gaps
     const float CavernThreshold = 0.6f;
     const int Step = 4;                       // lattice spacing; the finest noise octave spans ~25 blocks, so interpolation is visually exact
     const int Lx = VoxelWorld.ChunkSize / Step + 1;
 
     readonly TerrainParams _t;
     readonly FastNoiseLite _tunnelA, _tunnelB, _cavern;
+
+    /// <summary>0 in the shallow band, 1 from <see cref="DeepFrom"/> down, smooth between.</summary>
+    static float DeepBlend(int depth)
+    {
+        float t = Math.Clamp((depth - ShallowTo) / (float)(DeepFrom - ShallowTo), 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
 
     public CaveCarver(MapSettings s)
     {
@@ -46,8 +58,10 @@ public sealed class CaveCarver
         if (maxTop < MinY) return;
 
         int ly = maxTop / Step + 2;
-        var a = new float[Lx * Lx * ly];
+        var a = new float[Lx * Lx * ly];       // tunnel noises, stretched tall...
         var b = new float[a.Length];
+        var a2 = new float[a.Length];          // ...and squashed flat; columns blend the two by depth
+        var b2 = new float[a.Length];
         var c = new float[a.Length];
         for (int j = 0; j < ly; j++)
             for (int k = 0; k < Lx; k++)
@@ -55,8 +69,10 @@ public sealed class CaveCarver
                 {
                     float x = x0 + i * Step, y = j * Step, z = z0 + k * Step;
                     int n = (j * Lx + k) * Lx + i;
-                    a[n] = _tunnelA.GetNoise(x, y * 1.5f, z);
-                    b[n] = _tunnelB.GetNoise(x, y * 1.5f, z);
+                    a[n] = _tunnelA.GetNoise(x, y * TallSquash, z);
+                    b[n] = _tunnelB.GetNoise(x, y * TallSquash, z);
+                    a2[n] = _tunnelA.GetNoise(x, y * FlatSquash, z);
+                    b2[n] = _tunnelB.GetNoise(x, y * FlatSquash, z);
                     c[n] = _cavern.GetNoise(x, y * 2f, z);
                 }
 
@@ -66,6 +82,7 @@ public sealed class CaveCarver
             {
                 int col = lx + lz * cs, t = top[col], ct = cavernTop[col];
                 if (t < MinY) continue;
+                int surface = world.GetSurfaceHeight(x0 + lx, z0 + lz);
                 int i0 = lx / Step, k0 = lz / Step;
                 float fx = (lx % Step) * inv, fz = (lz % Step) * inv;
                 for (int y = MinY; y <= t; y++)
@@ -73,9 +90,17 @@ public sealed class CaveCarver
                     int j0 = y / Step;
                     float fy = (y % Step) * inv;
                     int n = (j0 * Lx + k0) * Lx + i0;
+                    float u = DeepBlend(surface - y);
                     float va = Lerp3(a, n, fx, fy, fz), vb = Lerp3(b, n, fx, fy, fz);
-                    bool carve = va * va + vb * vb < TunnelWidth
-                        || (y <= ct && Lerp3(c, n, fx, fy, fz) > CavernThreshold);
+                    if (u > 0f)
+                    {
+                        va += (Lerp3(a2, n, fx, fy, fz) - va) * u;
+                        vb += (Lerp3(b2, n, fx, fy, fz) - vb) * u;
+                    }
+                    float vc = Lerp3(c, n, fx, fy, fz);
+                    float width = ShallowWidth + (DeepWidth - ShallowWidth) * u;
+                    bool carve = (va * va + vb * vb < width && (u < 0.5f || vc > DeepBreakup * (2f * u - 1f)))
+                        || (y <= ct && vc > CavernThreshold);
                     if (carve) world.SetBlock(x0 + lx, y, z0 + lz, Blocks.Air, markDirty: false);
                 }
             }
