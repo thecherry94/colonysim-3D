@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace ColonySim.Core;
 
 /// <summary>
@@ -80,6 +82,7 @@ public sealed class VoxelWorld
     /// <summary>Block and discovery bit with one chunk lookup (the fog hot path); the cell must be in bounds.</summary>
     internal ushort GetBlockInBounds(int x, int y, int z, out bool discovered)
     {
+        Debug.Assert(InBounds(x, y, z), $"({x}, {y}, {z}) is out of bounds");
         var c = ChunkAt(x, y, z, out int i);
         discovered = c.IsDiscovered(i);
         return c.Get(i);

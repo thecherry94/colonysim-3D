@@ -14,9 +14,11 @@ public sealed class PlayerView(VoxelWorld world, TerrainLayers layers)
     public ushort GetVisibleBlock(int x, int y, int z) => FogEnabled ? GetKnownBlock(x, y, z) : World.GetBlock(x, y, z);
 
     /// <summary>The block as the colony knows it, always fogged whatever <see cref="FogEnabled"/> says. Air out of bounds.</summary>
-    public ushort GetKnownBlock(int x, int y, int z)
+    public ushort GetKnownBlock(int x, int y, int z) => World.InBounds(x, y, z) ? GetKnownBlockInBounds(x, y, z) : Blocks.Air;
+
+    /// <summary><see cref="GetKnownBlock"/> for a cell the caller has already bounds-checked (the navigation hot path).</summary>
+    internal ushort GetKnownBlockInBounds(int x, int y, int z)
     {
-        if (!World.InBounds(x, y, z)) return Blocks.Air;
         ushort id = World.GetBlockInBounds(x, y, z, out bool discovered);
         if (!discovered && !Solid[id]) return layers.BaseMaterial(x, y, z, World.GetSurfaceHeight(x, z));
         return id;

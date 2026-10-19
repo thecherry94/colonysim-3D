@@ -136,7 +136,7 @@ public sealed class NavRules(PlayerView view)
 
     ushort Known(Int3 c) => view.GetKnownBlock(c.X, c.Y, c.Z);
 
-    byte At(Int3 c) => _world.InBounds(c.X, c.Y, c.Z) ? Flags[Known(c)] : OutOfBounds;
+    byte At(Int3 c) => _world.InBounds(c.X, c.Y, c.Z) ? Flags[view.GetKnownBlockInBounds(c.X, c.Y, c.Z)] : OutOfBounds;
 
     bool IsNaturalSolid(Int3 c) => (At(c) & NaturalSolid) == NaturalSolid;
 
@@ -150,7 +150,7 @@ public sealed class NavRules(PlayerView view)
     {
         feet = OutOfBounds;
         if (c.Y < 1 || c.Y > 254 || !_world.InBounds(c.X, c.Y, c.Z)) return false;
-        feet = Flags[Known(c)];
+        feet = Flags[view.GetKnownBlockInBounds(c.X, c.Y, c.Z)];
         return (feet & SolidBit) == 0 && Stands(feet, At(c + Int3.Up), At(c + Int3.Down));
     }
 
