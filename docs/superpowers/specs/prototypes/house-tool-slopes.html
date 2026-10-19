@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>House tool + slopes prototype</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1f27; color: #e6e6e6; font-family: system-ui, sans-serif; overflow: hidden; }
+  #panel { position: absolute; top: 12px; left: 12px; width: 350px; max-height: calc(100% - 24px); overflow-y: auto; box-sizing: border-box; background: rgba(20,24,32,.93); border: 1px solid #333a48; border-radius: 10px; padding: 14px 16px; font-size: 13px; line-height: 1.45; }
+  #panel h2 { margin: 0 0 4px; font-size: 16px; }
+  #panel h3 { margin: 12px 0 4px; font-size: 13px; color: #9fb0d0; text-transform: uppercase; letter-spacing: .04em; }
+  #panel .tag { display: inline-block; font-size: 11px; background: #3a2f12; color: #f3c64d; border-radius: 4px; padding: 1px 6px; margin-bottom: 6px; }
+  #panel p { margin: 4px 0; color: #b9bfcc; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; align-items: center; }
+  button { background: #2b3242; color: #e6e6e6; border: 1px solid #44506a; border-radius: 6px; padding: 4px 8px; cursor: pointer; font-size: 12px; }
+  button:hover { background: #38425a; }
+  button.active { background: #f3c64d; color: #1b1f27; border-color: #f3c64d; font-weight: 600; }
+  button.go { background: #27ae60; border-color: #27ae60; font-weight: 600; }
+  button:disabled { opacity: .35; cursor: default; }
+  label { display: block; margin: 3px 0; cursor: pointer; }
+  ul { margin: 4px 0; padding-left: 18px; color: #b9bfcc; }
+  li { margin: 2px 0; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  kbd { background: #2b3242; border: 1px solid #44506a; border-radius: 3px; padding: 0 4px; font-size: 11px; }
+  #cost { color: #e6e6e6; }
+  #status { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); max-width: 70%; text-align: center; background: rgba(20,24,32,.9); border: 1px solid #333a48; border-radius: 8px; padding: 6px 12px; font-size: 13px; pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="panel">
+  <h2>House tool + slopes</h2>
+  <div class="tag">throwaway prototype</div>
+
+  <h3>Researched so far</h3>
+  <div class="row" id="tiers">
+    <button data-tier="0" class="active">Shelter</button>
+    <button data-tier="1">Basic house</button>
+    <button data-tier="2">Multi-story</button>
+  </div>
+  <p id="tierInfo"></p>
+
+  <h3>Tools</h3>
+  <div class="row">
+    <button data-tool="none" class="active">Camera <kbd>Esc</kbd></button>
+    <button data-tool="house">Build <kbd>H</kbd></button>
+  </div>
+
+  <div id="edit" style="display:none">
+    <h3>Edit the ghost</h3>
+    <div class="row" id="modes">
+      <button data-mode="area" class="active">Add area <kbd>1</kbd></button>
+      <button data-mode="door">Door <kbd>2</kbd></button>
+      <button data-mode="window">Window <kbd>3</kbd></button>
+      <button data-mode="iwall">Inside wall <kbd>4</kbd></button>
+      <button data-mode="stairs" class="t2">Stairs <kbd>5</kbd></button>
+      <button data-mode="ladder" class="t2">Ladder <kbd>6</kbd></button>
+      <button data-mode="erase">Remove <kbd>7</kbd></button>
+    </div>
+    <div class="row t2">Floors:
+      <button id="fminus">−</button><b id="floorsN">1</b><button id="fplus">+</button>
+    </div>
+    <div class="row">
+      <button id="build" class="go">✔ Build <kbd>Enter</kbd></button>
+      <button id="undo">Undo area <kbd>Ctrl+Z</kbd></button>
+      <button id="discard">Discard <kbd>Del</kbd></button>
+    </div>
+    <p id="cost"></p>
+  </div>
+
+  <div id="viewBox" style="display:none">
+    <h3>Look inside</h3>
+    <div class="row" id="viewRow"></div>
+    <p style="font-size:12px">Uses the slice view: everything above the chosen floor is hidden. <kbd>PgUp</kbd>/<kbd>PgDn</kbd> also work.</p>
+  </div>
+
+  <h3>Controls</h3>
+  <ul>
+    <li><b>Camera tool:</b> left-drag orbits, right-drag pans, wheel zooms</li>
+    <li><b>Build tool:</b> left-drag on the ground draws an area. Right-drag orbits, middle-drag pans.</li>
+    <li><b>Doors and windows:</b> click a wall of the ghost. <b>Inside walls:</b> drag a line inside it. <b>Stairs:</b> drag from the bottom step the way they should climb.</li>
+  </ul>
+  <p><span class="sw" style="background:#8fc4ff"></span>planned building
+     <span class="sw" style="background:#ffd23f;margin-left:8px"></span>ground to dig away</p>
+  <p style="font-size:12px">There are no colonists here. On Build, the blocks just appear bottom-up to show the result.</p>
+
+  <h3>Map</h3>
+  <label><input id="slopes" type="checkbox" checked> Slopes on single-block steps</label>
+  <label><input id="flat" type="checkbox" checked> Flattened start site (crates mark it)</label>
+  <div class="row"><button id="regen">New map</button></div>
+</div>
+<div id="status">Pick a tool. The crates in the flat clearing are the start site.</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// ---------- world ----------
+const SX = 64, SZ = 64, SY = 48, STORY = 4, SC = { x: 22, z: 42 };
+const AIR=0, GRASS=1, DIRT=2, STONE=3, LOG=4, LEAVES=5, PLANK=6, WALL=7, DOOR=8, GLASS=9,
+      STAIRS=10, LADDER=11, CRATE=12, FOUND=13, ROOF=14, BOULDER=15;
+const NATURAL = new Set([GRASS, DIRT, STONE]);
+const HEX = {
+  [GRASS]:[0x6aa84f,0x8b6b4a], [DIRT]:[0x8b6b4a,0x8b6b4a], [STONE]:[0x8f9296,0x8f9296],
+  [LOG]:[0xb08850,0x6b4a2b], [LEAVES]:[0x3f7d2c,0x3a7329], [PLANK]:[0xc9a066,0xb58b52],
+  [WALL]:[0xa97d45,0xa97d45], [DOOR]:[0x6b3f1f,0x6b3f1f], [GLASS]:[0xcfe9ff,0xbfe3ff],
+  [STAIRS]:[0xd2aa70,0xb58b52], [LADDER]:[0x8a5a2b,0x8a5a2b], [CRATE]:[0xd8a85a,0xa8742e],
+  [FOUND]:[0x7c7c84,0x6e6e76], [ROOF]:[0xa0503c,0x87402f], [BOULDER]:[0x7a7d82,0x6c6f74],
+};
+const COL = {}; for (const k in HEX) COL[k] = HEX[k].map(h => new THREE.Color(h));
+const GHOST_TINT = new THREE.Color(0x8fc4ff), DIG_COL = new THREE.Color(0xffd23f);
+
+const blocks = new Uint8Array(SX * SY * SZ), meta = new Map();
+const G = new Int16Array(SX * SZ), NAT = new Uint8Array(SX * SZ);
+const idx = (x, y, z) => (y * SZ + z) * SX + x;
+const inb = (x, z) => x >= 0 && z >= 0 && x < SX && z < SZ;
+const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+const PT = [[0,0],[1,0],[1,1],[0,1]];
+const ptIndex = (px, pz) => px === 0 ? (pz === 0 ? 0 : 3) : (pz === 0 ? 1 : 2);
+const hash = (x, y, z) => { let h = (x * 374761393 + y * 668265263 + z * 1274126177) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
+
+function rng(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function makeNoise(R, cell) {
+  const gw = Math.ceil(SX / cell) + 2, gh = Math.ceil(SZ / cell) + 2, g = new Float32Array(gw * gh).map(() => R());
+  return (x, z) => {
+    const fx = x / cell, fz = z / cell, ix = Math.floor(fx), iz = Math.floor(fz);
+    let tx = fx - ix, tz = fz - iz; tx = tx * tx * (3 - 2 * tx); tz = tz * tz * (3 - 2 * tz);
+    const a = g[ix + iz * gw], b = g[ix + 1 + iz * gw], c = g[ix + (iz + 1) * gw], d = g[ix + 1 + (iz + 1) * gw];
+    return a + (b - a) * tx + (c - a) * tz + (a - b - c + d) * tx * tz;
+  };
+}
+const smooth = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+
+let startY = 0, slopesOn = true, flatOn = true;
+function generate(seed) {
+  blocks.fill(0); meta.clear();
+  const R = rng(seed), n1 = makeNoise(R, 18), n2 = makeNoise(R, 7), n3 = makeNoise(R, 5), n4 = makeNoise(R, 5);
+  const H = new Float32Array(SX * SZ);
+  for (let z = 0; z < SZ; z++) for (let x = 0; x < SX; x++) {
+    let h = 13 + 10 * n1(x, z) + 3 * n2(x, z);
+    if (Math.hypot(x - 48, z - 15) < 8 + 5 * n3(x, z)) h += 5;          // a plateau with real cliffs
+    H[x + z * SX] = h;
+  }
+  startY = Math.round(H[SC.x + SC.z * SX]);
+  if (flatOn) for (let z = 0; z < SZ; z++) for (let x = 0; x < SX; x++) {
+    const r = Math.hypot(x - SC.x, z - SC.z) + 8 * (n4(x, z) - .5);       // wobbly radius keeps the edge organic
+    const w = 1 - smooth(5, 12, r);
+    H[x + z * SX] += (startY - H[x + z * SX]) * w;
+  }
+  for (let z = 0; z < SZ; z++) for (let x = 0; x < SX; x++) {
+    const top = Math.max(3, Math.min(SY - 10, Math.round(H[x + z * SX])));
+    for (let y = 0; y < top; y++) blocks[idx(x, y, z)] = y === top - 1 ? GRASS : y >= top - 4 ? DIRT : STONE;
+  }
+  computeGround();
+  for (let k = 0; k < 80; k++) {
+    const x = 2 + Math.floor(R() * (SX - 4)), z = 2 + Math.floor(R() * (SZ - 4)), c = x + z * SX;
+    if (Math.hypot(x - SC.x, z - SC.z) < 13 || !NAT[c]) continue;
+    const S = G[c];
+    if (DIRS.some(([dx, dz]) => G[c + dx + dz * SX] !== S || !NAT[c + dx + dz * SX])) continue;
+    if (R() < .25) { blocks[idx(x, S, z)] = BOULDER; if (R() < .5) blocks[idx(x, S + 1, z)] = BOULDER; NAT[c] = 0; continue; }
+    for (let y = S; y < S + 4; y++) blocks[idx(x, y, z)] = LOG;
+    for (let dy = 3; dy <= 5; dy++) for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+      if (dy < 5 && Math.abs(dx) === 2 && Math.abs(dz) === 2) continue;
+      if (dy === 5 && Math.abs(dx) + Math.abs(dz) > 1) continue;
+      const X = x + dx, Z = z + dz, Y = S + dy;
+      if (inb(X, Z) && Y < SY && blocks[idx(X, Y, Z)] === AIR) blocks[idx(X, Y, Z)] = LEAVES;
+    }
+    NAT[c] = 0;
+  }
+  for (const [dx, dz] of [[0,0],[1,0],[0,1],[3,2]]) blocks[idx(SC.x + dx, startY, SC.z + dz)] = CRATE;
+  computeGround();
+}
+
+// Ground height per column, skipping leaves so tree canopies don't count as ground.
+function computeGround() {
+  for (let z = 0; z < SZ; z++) for (let x = 0; x < SX; x++) {
+    let y = SY - 1;
+    for (; y >= 0; y--) { const t = blocks[idx(x, y, z)]; if (t !== AIR && t !== LEAVES) break; }
+    G[x + z * SX] = y + 1;
+    NAT[x + z * SX] = y >= 0 && NATURAL.has(blocks[idx(x, y, z)]) ? 1 : 0;
+  }
+}
+
+// A slope fills the air cell on top of a natural column. Each corner rises by one
+// when a natural column touching that corner is exactly one block higher.
+// Two raised corners = ramp, one = outer corner, three = inner corner.
+// Drops of 2+ never raise a corner, so cliffs stay sharp.
+function slopeCell(x, z) {
+  const c = x + z * SX;
+  if (!NAT[c]) return null;
+  const S = G[c];
+  if (S >= SY || blocks[idx(x, S, z)] !== AIR) return null;
+  const h = [S, S, S, S]; let any = false;
+  for (let k = 0; k < 4; k++) {
+    const px = x + PT[k][0], pz = z + PT[k][1];
+    for (let dz = -1; dz <= 0; dz++) for (let dx = -1; dx <= 0; dx++) {
+      const cx = px + dx, cz = pz + dz;
+      if (!inb(cx, cz)) continue;
+      const cc = cx + cz * SX;
+      if (NAT[cc] && G[cc] === S + 1) { h[k] = S + 1; any = true; }
+    }
+  }
+  return any ? { S, h } : null;
+}
+
+// ---------- meshing ----------
+const FACES = [
+  { d:[ 1,0,0], c:[[1,0,0],[1,1,0],[1,1,1],[1,0,1]], s:.82 },
+  { d:[-1,0,0], c:[[0,0,1],[0,1,1],[0,1,0],[0,0,0]], s:.76 },
+  { d:[0, 1,0], c:[[0,1,0],[0,1,1],[1,1,1],[1,1,0]], s:1 },
+  { d:[0,-1,0], c:[[0,0,0],[1,0,0],[1,0,1],[0,0,1]], s:.5 },
+  { d:[0,0, 1], c:[[1,0,1],[1,1,1],[0,1,1],[0,0,1]], s:.68 },
+  { d:[0,0,-1], c:[[0,0,0],[0,1,0],[1,1,0],[1,0,0]], s:.62 },
+];
+class GB {
+  constructor() { this.p = []; this.c = []; }
+  tri(a, b, c, col, s) {
+    this.p.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+    for (let k = 0; k < 3; k++) this.c.push(col.r * s, col.g * s, col.b * s);
+  }
+  quad(a, b, c, d, col, s) { this.tri(a, b, c, col, s); this.tri(a, c, d, col, s); }
+  box(x0, y0, z0, x1, y1, z1, top, side, j = 1) {
+    const X = [x0, x1], Y = [y0, y1], Z = [z0, z1];
+    for (const f of FACES) this.quad(...f.c.map(([a, b, c]) => [X[a], Y[b], Z[c]]), f.d[1] === 1 ? top : side, f.s * j);
+  }
+  mesh(mat) {
+    if (!this.p.length) this.tri([0,0,0], [0,0,0], [0,0,0], new THREE.Color(), 0);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
+    g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
+    g.computeBoundingSphere();
+    return new THREE.Mesh(g, mat);
+  }
+}
+function stairGeom(gb, x, y, z, dir, ct, cs, j) {
+  gb.box(x, y, z, x + 1, y + .5, z + 1, ct, cs, j);
+  const [a0, a1, b0, b1] = dir === 0 ? [x + .5, x + 1, z, z + 1] : dir === 1 ? [x, x + .5, z, z + 1]
+                         : dir === 2 ? [x, x + 1, z + .5, z + 1] : [x, x + 1, z, z + .5];
+  gb.box(a0, y + .5, b0, a1, y + 1, b1, ct, cs, j);
+}
+function ladderGeom(gb, x, y, z, c, j) {
+  gb.box(x + .15, y, z + .44, x + .25, y + 1, z + .56, c, c, j);
+  gb.box(x + .75, y, z + .44, x + .85, y + 1, z + .56, c, c, j);
+  for (const r of [.15, .4, .65, .9]) gb.box(x + .25, y + r - .03, z + .46, x + .75, y + r + .03, z + .54, c, c, j);
+}
+function slopeShade(A, B, C) {
+  const ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2], vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
+  let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+  const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+  if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+  return .6 + .4 * ny + .08 * nx - .05 * nz;
+}
+
+let cutY = SY;
+const solidAt = (x, y, z) => {
+  if (y < 0) return true;
+  if (!inb(x, z) || y >= SY || y >= cutY) return false;
+  const t = blocks[idx(x, y, z)];
+  return t !== AIR && t !== STAIRS && t !== LADDER;
+};
+function drawSlope(gb, x, z, sc) {
+  const { S, h } = sc, t = blocks[idx(x, S - 1, z)], [ct, cs] = COL[t], j = .93 + .14 * hash(x, S, z);
+  const v = k => [x + PT[k][0], h[k], z + PT[k][1]];
+  const up = h.map(y => y > S), n = up.filter(Boolean).length;
+  const odd = n === 1 ? up.indexOf(true) : n === 3 ? up.indexOf(false) : -1;
+  const tris = odd >= 0 ? [[odd, (odd + 1) % 4, (odd + 3) % 4], [(odd + 1) % 4, (odd + 2) % 4, (odd + 3) % 4]] : [[0, 1, 2], [0, 2, 3]];
+  for (const [a, b, c] of tris) { const A = v(a), B = v(b), C = v(c); gb.tri(A, B, C, ct, slopeShade(A, B, C) * j); }
+  const NB = [[0,-1],[1,0],[0,1],[-1,0]];
+  for (let e = 0; e < 4; e++) {
+    const ka = e, kb = (e + 1) % 4, nx = x + NB[e][0], nz = z + NB[e][1];
+    if (solidAt(nx, S, nz)) continue;
+    const nb = inb(nx, nz) ? slopeCell(nx, nz) : null;
+    const nh = k => (!nb || nb.S !== S) ? S : nb.h[ptIndex(x + PT[k][0] - nx, z + PT[k][1] - nz)];
+    const ha = h[ka], hb = h[kb], la = Math.min(nh(ka), ha), lb = Math.min(nh(kb), hb);
+    if (ha <= la && hb <= lb) continue;
+    gb.quad([x + PT[ka][0], la, z + PT[ka][1]], [x + PT[kb][0], lb, z + PT[kb][1]],
+            [x + PT[kb][0], hb, z + PT[kb][1]], [x + PT[ka][0], ha, z + PT[ka][1]], cs, (NB[e][0] ? .79 : .65) * j);
+  }
+}
+
+// ---------- scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio); renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const canvas = renderer.domElement;
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x9fc3e6);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, .5, 1000);
+const controls = new OrbitControls(camera, canvas);
+controls.maxPolarAngle = Math.PI * .48;
+const world = new THREE.Group(); world.position.set(-SX / 2, 0, -SZ / 2); scene.add(world);
+const solidMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+const ghostMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: .55, depthWrite: false });
+const digMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: true, opacity: .32, depthWrite: false });
+let solidMesh = null, ghostMesh = null, digMesh = null;
+const swap = (old, m) => { if (old) { world.remove(old); old.geometry.dispose(); } if (m) world.add(m); return m; };
+const marker = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1.04, 1.04, 1.04)), new THREE.LineBasicMaterial({ color: 0xffffff }));
+marker.visible = false; world.add(marker);
+const showMarker = (x, y, z, h = 1) => { marker.position.set(x + .5, y + h / 2, z + .5); marker.scale.set(1, h, 1); marker.visible = true; };
+
+function rebuildSolid() {
+  const gb = new GB(), top = Math.min(SY, cutY);
+  for (let y = 0; y < top; y++) for (let z = 0; z < SZ; z++) for (let x = 0; x < SX; x++) {
+    const i = idx(x, y, z), t = blocks[i];
+    if (!t) continue;
+    const [ct, cs] = COL[t], j = .93 + .14 * hash(x, y, z);
+    if (t === STAIRS) { stairGeom(gb, x, y, z, meta.get(i) || 0, ct, cs, j); continue; }
+    if (t === LADDER) { ladderGeom(gb, x, y, z, cs, j); continue; }
+    for (const f of FACES) {
+      if (solidAt(x + f.d[0], y + f.d[1], z + f.d[2])) continue;
+      gb.quad(...f.c.map(([a, b, c]) => [x + a, y + b, z + c]), f.d[1] === 1 ? ct : cs, f.s * j);
+    }
+  }
+  if (slopesOn) for (let z = 0; z < SZ; z++) for (let x = 0; x < SX; x++) {
+    const sc = slopeCell(x, z);
+    if (sc && sc.S < cutY) drawSlope(gb, x, z, sc);
+  }
+  solidMesh = swap(solidMesh, gb.mesh(solidMat));
+}
+
+// ---------- building plans ----------
+let tier = 0, tool = 'none', mode = 'area', plan = null, lastHouse = null, viewFloor = 'roof';
+let ghostRes = null, drag = null, building = null;
+const K = (x, z, f) => x + ',' + z + ',' + f;
+const newPlan = baseY => ({ baseY, rects: [], doors: new Set(), windows: new Set(), iwalls: new Set(), stairs: [], ladders: new Set(), floors: 1 });
+const clonePlan = p => ({ ...p, rects: [...p.rects], doors: new Set(p.doors), windows: new Set(p.windows), iwalls: new Set(p.iwalls), stairs: [...p.stairs], ladders: new Set(p.ladders) });
+const normRect = d => ({ x0: Math.min(d.ax, d.bx), x1: Math.max(d.ax, d.bx), z0: Math.min(d.az, d.bz), z1: Math.max(d.az, d.bz) });
+const stairCells = s => [0, 1, 2, 3].map(i => [s.x + DIRS[s.dir][0] * i, s.z + DIRS[s.dir][1] * i]);
+
+function analyze(p) {
+  const F = new Set();
+  for (const r of p.rects) for (let z = r.z0; z <= r.z1; z++) for (let x = r.x0; x <= r.x1; x++) if (inb(x, z)) F.add(x + z * SX);
+  const inF = (x, z) => inb(x, z) && F.has(x + z * SX);
+  // Outer wall = footprint cell with any of its 8 neighbours outside, so inner corners of L-shapes close up.
+  const outer = (x, z) => { if (!inF(x, z)) return false; for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) if (!inF(x + dx, z + dz)) return true; return false; };
+  const wallOn = (x, z, f) => outer(x, z) || (inF(x, z) && p.iwalls.has(K(x, z, f)));
+  const corner = (x, z, f) => wallOn(x, z, f) && (wallOn(x - 1, z, f) || wallOn(x + 1, z, f)) && (wallOn(x, z - 1, f) || wallOn(x, z + 1, f));
+  return { F, inF, outer, wallOn, corner };
+}
+
+function computePlan(p) {
+  const A = analyze(p), { F, inF, outer, wallOn, corner } = A, out = new Map(), digs = new Set(), by = p.baseY;
+  const put = (x, y, z, t, dir) => { if (y >= 0 && y < SY && inb(x, z)) out.set(idx(x, y, z), { t, dir }); };
+  const fb = f => by + STORY * f;
+  for (const c of F) {
+    const x = c % SX, z = (c / SX) | 0;
+    for (let y = by; y < SY; y++) if (blocks[idx(x, y, z)] !== AIR) digs.add(idx(x, y, z));
+    for (let y = by - 1; y >= 0 && blocks[idx(x, y, z)] === AIR; y--) put(x, y, z, p.shelter ? DIRT : FOUND);
+    if (!p.shelter && !outer(x, z)) put(x, by - 1, z, PLANK);
+  }
+  if (p.shelter) {
+    const r = p.rects[0];
+    for (const [x, z] of [[r.x0, r.z0], [r.x1, r.z0], [r.x0, r.z1], [r.x1, r.z1]]) for (let y = by; y < by + 3; y++) put(x, y, z, LOG);
+    for (const c of F) put(c % SX, by + 3, (c / SX) | 0, LEAVES);
+    return { blocks: out, digs, A };
+  }
+  for (let f = 0; f < p.floors; f++) {
+    const y0 = fb(f);
+    for (const c of F) {
+      const x = c % SX, z = (c / SX) | 0, k = K(x, z, f);
+      if (f > 0) put(x, y0 - 1, z, PLANK);
+      if (!wallOn(x, z, f)) continue;
+      for (let y = y0; y < y0 + 3; y++) put(x, y, z, WALL);
+      if (corner(x, z, f)) continue;
+      if (p.doors.has(k)) { put(x, y0, z, DOOR); put(x, y0 + 1, z, DOOR); }
+      else if (p.windows.has(k)) put(x, y0 + 1, z, GLASS);
+    }
+  }
+  const topY = fb(p.floors) - 1;
+  for (const c of F) put(c % SX, topY, (c / SX) | 0, PLANK);
+  for (const s of p.stairs) {
+    if (s.f >= p.floors - 1) continue;
+    const y0 = fb(s.f);
+    stairCells(s).forEach(([x, z], i) => { put(x, y0 + i, z, STAIRS, s.dir); if (i < 3) out.delete(idx(x, y0 + 3, z)); });
+  }
+  for (const k of p.ladders) {
+    const [x, z, f] = k.split(',').map(Number);
+    if (f >= p.floors - 1) continue;
+    for (let y = fb(f); y < fb(f) + 4; y++) put(x, y, z, LADDER);
+  }
+  // Stepped roof that follows any merged shape: each ring inward sits one block higher.
+  const D = new Set();
+  for (const c of F) { const x = c % SX, z = (c / SX) | 0; for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) if (inb(x + dx, z + dz)) D.add(x + dx + (z + dz) * SX); }
+  const dist = new Map(); let q = [];
+  for (const c of D) { const x = c % SX, z = (c / SX) | 0; if (DIRS.some(([dx, dz]) => !inb(x + dx, z + dz) || !D.has(x + dx + (z + dz) * SX))) { dist.set(c, 1); q.push(c); } }
+  while (q.length) {
+    const nq = [];
+    for (const c of q) { const x = c % SX, z = (c / SX) | 0, d = dist.get(c);
+      for (const [dx, dz] of DIRS) { const X = x + dx, Z = z + dz, n = X + Z * SX; if (inb(X, Z) && D.has(n) && !dist.has(n)) { dist.set(n, d + 1); nq.push(n); } } }
+    q = nq;
+  }
+  for (const [c, d] of dist) {
+    const x = c % SX, z = (c / SX) | 0, y = topY + Math.min(d, 4) - 1, i = idx(x, y, z);
+    if (y < SY && (blocks[i] === AIR || digs.has(i)) && !(d === 1 && inF(x, z))) put(x, y, z, ROOF);
+  }
+  return { blocks: out, digs, A };
+}
+
+function rebuildGhost() {
+  if (!ghostRes) { ghostMesh = swap(ghostMesh, null); digMesh = swap(digMesh, null); return; }
+  const gb = new GB(), db = new GB(), B = ghostRes.blocks, Dg = ghostRes.digs;
+  const gs = (x, y, z) => { if (!inb(x, z) || y < 0 || y >= SY || y >= cutY) return false; const b = B.get(idx(x, y, z)); return !!b && b.t !== STAIRS && b.t !== LADDER; };
+  const ds = (x, y, z) => inb(x, z) && y >= 0 && y < SY && y < cutY && Dg.has(idx(x, y, z));
+  const emit = (gbx, x, y, z, e, cull, ct, cs) => {
+    for (const f of FACES) {
+      if (cull(x + f.d[0], y + f.d[1], z + f.d[2])) continue;
+      gbx.quad(...f.c.map(([a, b, c]) => [x + (a ? 1 + e : -e), y + (b ? 1 + e : -e), z + (c ? 1 + e : -e)]), f.d[1] === 1 ? ct : cs, f.s);
+    }
+  };
+  for (const [i, b] of B) {
+    const x = i % SX, z = Math.floor(i / SX) % SZ, y = Math.floor(i / (SX * SZ));
+    if (y >= cutY) continue;
+    const ct = COL[b.t][0].clone().lerp(GHOST_TINT, .3), cs = COL[b.t][1].clone().lerp(GHOST_TINT, .3);
+    if (b.t === STAIRS) stairGeom(gb, x, y, z, b.dir, ct, cs, 1);
+    else if (b.t === LADDER) ladderGeom(gb, x, y, z, cs, 1);
+    else emit(gb, x, y, z, .006, gs, ct, cs);
+  }
+  for (const i of Dg) {
+    const x = i % SX, z = Math.floor(i / SX) % SZ, y = Math.floor(i / (SX * SZ));
+    if (y < cutY && !B.has(i)) emit(db, x, y, z, .02, ds, DIG_COL, DIG_COL);
+  }
+  ghostMesh = swap(ghostMesh, gb.mesh(ghostMat));
+  digMesh = swap(digMesh, db.mesh(digMat));
+}
+
+function setGhost(p) { ghostRes = p ? computePlan(p) : null; rebuildGhost(); updateCost(); }
+
+function updateCost() {
+  const el = document.getElementById('cost');
+  if (!ghostRes) { el.textContent = ''; return; }
+  const n = {};
+  const name = { [LOG]: 'beams', [LEAVES]: 'leaves', [FOUND]: 'stone', [DIRT]: 'dirt', [GLASS]: 'glass' };
+  for (const b of ghostRes.blocks.values()) { const k = name[b.t] || 'planks'; n[k] = (n[k] || 0) + 1; }
+  el.innerHTML = '<b>Needs:</b> ' + Object.entries(n).map(([k, v]) => `${v} ${k}`).join(' · ') + (ghostRes.digs.size ? ` · <b>dig</b> ${ghostRes.digs.size}` : '');
+}
+
+function queueBuild(p) {
+  const res = computePlan(p), ops = [];
+  for (const i of [...res.digs].sort((a, b) => b - a)) ops.push({ i, t: AIR });
+  for (const i of [...res.blocks.keys()].sort((a, b) => a - b)) { const b = res.blocks.get(i); ops.push({ i, t: b.t, dir: b.dir }); }
+  if (building) building.ops.push(...ops); else building = { ops, k: 0 };
+}
+function stepBuild() {
+  if (!building) return;
+  for (let n = 0; n < 30 && building.k < building.ops.length; n++) {
+    const o = building.ops[building.k++];
+    blocks[o.i] = o.t;
+    if (o.dir !== undefined) meta.set(o.i, o.dir); else meta.delete(o.i);
+  }
+  computeGround(); rebuildSolid();
+  if (plan) setGhost(plan);
+  if (building.k >= building.ops.length) { building = null; status('Built. Use "Look inside" to see each floor.'); }
+}
+
+// ---------- view floors ----------
+const viewHouse = () => plan || lastHouse;
+const curFloor = () => viewFloor === 'roof' ? 0 : Math.min(viewFloor, viewHouse().floors - 1);
+const fbOf = f => plan.baseY + STORY * f;
+function applyCut() {
+  const h = viewHouse();
+  if (h && viewFloor !== 'roof' && viewFloor >= h.floors) viewFloor = h.floors - 1;
+  cutY = (!h || viewFloor === 'roof' || tier === 0) ? SY : h.baseY + STORY * viewFloor + 3;
+  rebuildSolid(); rebuildGhost(); renderViewRow();
+}
+function ensureFloorView() { if (viewFloor === 'roof') { viewFloor = 0; applyCut(); } }
+function renderViewRow() {
+  const h = viewHouse(), box = document.getElementById('viewBox'), row = document.getElementById('viewRow');
+  box.style.display = h && tier > 0 ? '' : 'none';
+  if (!h) return;
+  row.innerHTML = '';
+  const opts = [['roof', 'Whole building']]; for (let f = 0; f < h.floors; f++) opts.push([f, f === 0 ? 'Ground floor' : `Floor ${f + 1}`]);
+  for (const [v, label] of opts) {
+    const b = document.createElement('button'); b.textContent = label; if (v === viewFloor) b.className = 'active';
+    b.onclick = () => { viewFloor = v; applyCut(); }; row.appendChild(b);
+  }
+}
+
+// ---------- input ----------
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+function setRay(e) { const r = canvas.getBoundingClientRect(); ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(ndc, camera); }
+function pickCell(e) {
+  setRay(e);
+  const hit = ray.intersectObjects(ghostMesh ? [ghostMesh, solidMesh] : [solidMesh], false)[0];
+  if (!hit) return null;
+  const n = hit.face.normal.clone(); if (n.dot(ray.ray.direction) > 0) n.negate();
+  const p = world.worldToLocal(hit.point.clone()).addScaledVector(n, -.01).floor();
+  return inb(p.x, p.z) ? { x: p.x, y: p.y, z: p.z } : null;
+}
+function planeCell(e, y) {
+  setRay(e);
+  const pt = new THREE.Vector3();
+  if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), pt)) return null;
+  const l = world.worldToLocal(pt);
+  return { x: Math.max(0, Math.min(SX - 1, Math.floor(l.x))), z: Math.max(0, Math.min(SZ - 1, Math.floor(l.z))) };
+}
+const clampSpan = (a, b, n) => b > a ? Math.min(b, a + n - 1) : Math.max(b, a - n + 1);
+const activeMode = () => (!plan || tier === 0) ? 'area' : mode;
+const iwallCells = d => {
+  const out = [];
+  if (Math.abs(d.bx - d.ax) >= Math.abs(d.bz - d.az)) for (let x = Math.min(d.ax, d.bx); x <= Math.max(d.ax, d.bx); x++) out.push([x, d.az]);
+  else for (let z = Math.min(d.az, d.bz); z <= Math.max(d.az, d.bz); z++) out.push([d.ax, z]);
+  return out;
+};
+const stairFromDrag = d => {
+  const dx = d.bx - d.ax, dz = d.bz - d.az;
+  if (!dx && !dz) return null;
+  return { x: d.ax, z: d.az, dir: Math.abs(dx) >= Math.abs(dz) ? (dx > 0 ? 0 : 1) : (dz > 0 ? 2 : 3), f: curFloor() };
+};
+function stairProblem(s) {
+  if (!s) return 'Drag from the bottom step in the direction the stairs should climb.';
+  if (s.f >= plan.floors - 1) return 'Stairs lead to the floor above. Add a floor first, or pick a lower floor.';
+  const A = analyze(plan);
+  for (const [x, z] of stairCells(s)) if (!A.inF(x, z) || A.wallOn(x, z, s.f) || A.wallOn(x, z, s.f + 1)) return 'Stairs need 4 free cells inside the building.';
+  return null;
+}
+function touches(p, r) {
+  const A = analyze(p);
+  for (let z = r.z0; z <= r.z1; z++) for (let x = r.x0; x <= r.x1; x++)
+    if (A.inF(x, z) || DIRS.some(([dx, dz]) => A.inF(x + dx, z + dz))) return true;
+  return false;
+}
+
+function previewDrag() {
+  const d = drag; let p;
+  if (d.kind === 'area') {
+    const r = normRect(d);
+    if (tier === 0) p = { ...newPlan(d.y), rects: [r], shelter: true };
+    else { p = plan ? clonePlan(plan) : newPlan(d.y); p.rects.push(r); }
+  } else if (d.kind === 'iwall') { p = clonePlan(plan); for (const [x, z] of iwallCells(d)) p.iwalls.add(K(x, z, curFloor())); }
+  else { p = clonePlan(plan); const s = stairFromDrag(d); if (s && !stairProblem(s)) p.stairs.push(s); }
+  setGhost(p);
+}
+
+canvas.addEventListener('pointerdown', e => {
+  if (tool !== 'house' || e.button !== 0) return;
+  const c = pickCell(e); if (!c) return;
+  const m = activeMode();
+  if (m === 'area') drag = { kind: 'area', ax: c.x, az: c.z, bx: c.x, bz: c.z, y: plan ? plan.baseY : G[c.x + c.z * SX] };
+  else if (m === 'iwall' || m === 'stairs') { ensureFloorView(); drag = { kind: m, ax: c.x, az: c.z, bx: c.x, bz: c.z, y: fbOf(curFloor()) }; }
+  else { ensureFloorView(); clickEdit(c); return; }
+  canvas.setPointerCapture(e.pointerId);
+  previewDrag();
+});
+canvas.addEventListener('pointermove', e => {
+  if (drag) {
+    const pc = planeCell(e, drag.y); if (!pc) return;
+    let { x, z } = pc;
+    if (drag.kind === 'area' && tier === 0) { x = clampSpan(drag.ax, x, 5); z = clampSpan(drag.az, z, 5); }
+    if (x !== drag.bx || z !== drag.bz) { drag.bx = x; drag.bz = z; previewDrag(); }
+    return;
+  }
+  if (tool !== 'house') { marker.visible = false; return; }
+  const c = pickCell(e); if (!c) { marker.visible = false; return; }
+  if (activeMode() === 'area') showMarker(c.x, plan ? plan.baseY : G[c.x + c.z * SX], c.z, .15);
+  else showMarker(c.x, fbOf(curFloor()), c.z, 3);
+});
+canvas.addEventListener('pointerup', () => {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.kind === 'area') {
+    const r = normRect(d), w = r.x1 - r.x0 + 1, h = r.z1 - r.z0 + 1;
+    if (tier === 0) {
+      if (w < 2 || h < 2) status('A shelter needs at least 2×2.');
+      else { queueBuild({ ...newPlan(d.y), rects: [r], shelter: true }); status(`Shelter ordered (${w}×${h}). With only shelters researched, colonists start right away.`); }
+    } else if (!plan) {
+      if (w < 3 || h < 3) status('A house needs at least 3×3.');
+      else { plan = newPlan(d.y); plan.rects.push(r); viewFloor = 'roof'; status('Ghost placed. Drag more areas that touch it, or switch to Door / Window / Inside wall. Build when ready.'); }
+    } else if (!touches(plan, r)) status('New areas must touch the building so they merge into it.');
+    else { plan.rects.push(r); status(`Merged: ${plan.rects.length} areas form one building.`); }
+  } else if (d.kind === 'iwall') {
+    const A = analyze(plan), f = curFloor();
+    for (const [x, z] of iwallCells(d)) if (A.inF(x, z) && !A.outer(x, z)) plan.iwalls.add(K(x, z, f));
+    status('Inside wall added. Use Door on it to connect the rooms.');
+  } else {
+    const s = stairFromDrag(d), why = stairProblem(s);
+    if (why) status(why); else { plan.stairs.push(s); status('Stairs placed. A hole opens in the floor above them.'); }
+  }
+  refresh();
+});
+
+function clickEdit(c) {
+  const f = curFloor(), k = K(c.x, c.z, f), A = analyze(plan);
+  if (mode === 'door' || mode === 'window') {
+    if (!A.wallOn(c.x, c.z, f)) return status('Click on a wall of the ghost.');
+    if (A.corner(c.x, c.z, f)) return status('Not on a corner or where walls meet.');
+    const set = mode === 'door' ? plan.doors : plan.windows, other = mode === 'door' ? plan.windows : plan.doors;
+    if (set.has(k)) set.delete(k); else { set.add(k); other.delete(k); }
+  } else if (mode === 'ladder') {
+    if (f >= plan.floors - 1) return status('Ladders lead to the floor above. Add a floor first, or pick a lower floor.');
+    if (!A.inF(c.x, c.z) || A.wallOn(c.x, c.z, f)) return status('Put the ladder inside, not on a wall.');
+    if (plan.ladders.has(k)) plan.ladders.delete(k); else plan.ladders.add(k);
+  } else if (mode === 'erase') {
+    if (plan.doors.delete(k) || plan.windows.delete(k)) { /* removed an opening first */ }
+    else if (!plan.ladders.delete(k) && !plan.iwalls.delete(k))
+      plan.stairs = plan.stairs.filter(s => !(s.f === f && stairCells(s).some(([x, z]) => x === c.x && z === c.z)));
+  }
+  refresh();
+}
+
+function refresh() { setGhost(plan); renderViewRow(); document.getElementById('floorsN').textContent = plan ? plan.floors : 1; }
+function status(t) { document.getElementById('status').textContent = t; }
+
+const TIER_INFO = [
+  'Primitive shelter: drag up to 5×5 on the ground. Four corner beams and a leaf roof. Colonists start as soon as you let go.',
+  'Basic house: drag one or more touching rectangles; they merge into one building. The ghost stays so you can add doors, windows and inside walls. Press Build when it looks right.',
+  'Multi-story: like the basic house, plus floors and stairs or ladders. Use "Look inside" to edit each floor.',
+];
+function setTier(t) {
+  tier = t; plan = null; drag = null; mode = 'area';
+  document.querySelectorAll('#tiers button').forEach(b => b.classList.toggle('active', +b.dataset.tier === t));
+  document.querySelectorAll('.t2').forEach(el => el.style.display = t === 2 ? '' : 'none');
+  document.getElementById('tierInfo').textContent = TIER_INFO[t];
+  setMode('area'); setTool(tool); applyCut(); refresh();
+}
+function setTool(t) {
+  tool = t; drag = null; marker.visible = false;
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  controls.mouseButtons = t === 'none'
+    ? { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }
+    : { LEFT: -1, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+  document.getElementById('edit').style.display = t === 'house' && tier > 0 ? '' : 'none';
+  if (t === 'house') status(tier === 0 ? 'Drag a rectangle on the ground (max 5×5).' : plan ? 'Edit the ghost, then Build.' : 'Drag a rectangle on the ground to place the ghost.');
+}
+function setMode(m) {
+  if ((m === 'stairs' || m === 'ladder') && tier < 2) return;
+  mode = m;
+  document.querySelectorAll('#modes button').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  if (plan && m !== 'area') ensureFloorView();
+  if (plan && m === 'area' && viewFloor !== 'roof') { viewFloor = 'roof'; applyCut(); }
+}
+function changeFloors(dn) {
+  if (!plan || tier < 2) return;
+  plan.floors = Math.max(1, Math.min(3, plan.floors + dn));
+  applyCut(); refresh();
+}
+function doBuild() {
+  if (!plan) return;
+  queueBuild(plan); lastHouse = { baseY: plan.baseY, floors: plan.floors };
+  plan = null; viewFloor = 'roof'; setMode('area'); applyCut(); refresh();
+  status('Building… (colonists would haul materials and do this)');
+}
+function stepView(dir) {
+  const h = viewHouse(); if (!h || tier === 0) return;
+  const order = [...Array(h.floors).keys(), 'roof'];
+  const i = order.indexOf(viewFloor), j = Math.max(0, Math.min(order.length - 1, i + dir));
+  viewFloor = order[j]; applyCut();
+}
+
+document.querySelectorAll('#tiers button').forEach(b => b.onclick = () => setTier(+b.dataset.tier));
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => setTool(b.dataset.tool));
+document.querySelectorAll('#modes button').forEach(b => b.onclick = () => setMode(b.dataset.mode));
+document.getElementById('fminus').onclick = () => changeFloors(-1);
+document.getElementById('fplus').onclick = () => changeFloors(1);
+document.getElementById('build').onclick = doBuild;
+document.getElementById('undo').onclick = () => { if (plan) { plan.rects.pop(); if (!plan.rects.length) plan = null; refresh(); applyCut(); } };
+document.getElementById('discard').onclick = () => { plan = null; viewFloor = 'roof'; applyCut(); refresh(); };
+document.getElementById('slopes').onchange = e => { slopesOn = e.target.checked; rebuildSolid(); };
+document.getElementById('flat').onchange = e => { flatOn = e.target.checked; newMap(currentSeed); };
+document.getElementById('regen').onclick = () => newMap((Math.random() * 1e9) | 0);
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (drag) { drag = null; refresh(); } else setTool('none'); }
+  else if (e.key === 'h' || e.key === 'H') setTool('house');
+  else if (e.key === 'Enter') doBuild();
+  else if (e.key === 'Delete') document.getElementById('discard').onclick();
+  else if (e.key === 'z' && e.ctrlKey) document.getElementById('undo').onclick();
+  else if (e.key === 'PageUp') { stepView(1); e.preventDefault(); }
+  else if (e.key === 'PageDown') { stepView(-1); e.preventDefault(); }
+  else if (e.key >= '1' && e.key <= '7') setMode(['area', 'door', 'window', 'iwall', 'stairs', 'ladder', 'erase'][+e.key - 1]);
+});
+addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
+
+let currentSeed = 1337;
+function newMap(seed) {
+  currentSeed = seed; generate(seed); plan = null; lastHouse = null; building = null; viewFloor = 'roof';
+  const tx = SC.x - SX / 2 + .5, tz = SC.z - SZ / 2 + .5;
+  controls.target.set(tx, startY, tz); camera.position.set(tx + 20, startY + 24, tz + 26); controls.update();
+  applyCut(); refresh();
+}
+newMap(currentSeed); setTier(0);
+renderer.setAnimationLoop(() => { stepBuild(); controls.update(); renderer.render(scene, camera); });
+</script>
+</body>
+</html>

@@ -42,22 +42,30 @@ Each step ends in something you can run and play with. Each step is designed in 
 ### Step 1: A world you can dig and build in
 Generated voxel maps with layers, caves, ore, mountains, valleys, rivers, trees and rocks. Chunked rendering that stays fast on large maps, the slice view with fog of war, an RTS-style camera, and designation tools for dig, wall, floor and stairs. No colonists yet. See `2026-10-18-step1-voxel-world-design.md`.
 
-### Step 2: Colonists who live in it
-- Pathfinding through 3D tunnels and multi-story buildings, using stairs and ladders.
-- A job system: colonists pick jobs by weighing player-set work priorities against their own needs.
-- **Needs:** hunger, thirst, rest, comfort, recreation and social, and possibly more.
+*Reordered on 2026-10-19:* gathering and building come before needs, because colonists can't meet needs without collecting and managing resources. Research and a tech tree were added.
+
+### Step 2: A working colony
+- Colonists who walk through 3D tunnels and multi-story buildings using stairs, ladders and ramps. Natural slopes soften the surface.
+- A job system with player-set work priorities. **Skills** improve with practice, so colonists fall into roles.
+- Resources: wood, stone and ore become items that are gathered in zones, hauled, stored and used.
+- An easy **house tool**: drag out a building, add doors, windows, inside walls, floors and stairs, and colonists build it.
+- Prison Architect-style **room zones** with furniture, workshops whose production orders let supply chains run themselves, and **research** unlocking better buildings.
+- The arc: hands-on early, nearly self-running basic survival later, with the player's attention moving to events and the tech tree.
+- See `2026-10-19-step2-working-colony-design.md`.
+
+### Step 3: Colonists are people
+- **Needs:** hunger, thirst, rest, comfort, recreation and social, and possibly more. Job choice weighs needs against work priorities.
+- **Food chain:** gathering, hunting, farming and cooking, since needs depend on it.
 - **Mood:** needs and events ("ate a fine meal", "slept on the floor", "chatted by the fire") add up to one mood value. Low mood for too long triggers **mental breaks**, as in RimWorld.
 - **Social life:** the player builds dedicated gathering spots such as fireplaces and gathering zones. Colonists who need company go there, and their interactions build or damage relationships.
-- **Individuality:** RimWorld-style **traits** that change behavior and mood (for example, someone who hates being underground), **skills** that improve with practice, **passions** for faster learning and mood, and **relationships** (friends, rivals, lovers, family).
-- Doors, windows and similar building pieces.
+- **Individuality:** RimWorld-style **traits** that change behavior and mood (for example, someone who hates being underground), **passions** for faster learning and mood, and **relationships** (friends, rivals, lovers, family).
 
-### Step 3: Survival
-- Food chain: gathering, hunting, farming and cooking.
-- Resources: wood, stone and ore become items that are hauled, stored and used.
+### Step 4: Nature
 - Wildlife: animals to hunt, and predators.
-- Weather, seasons and temperature, as in RimWorld: winters to prepare for, heat and cold that harm colonists, and seasonal crops.
+- Weather, seasons, day and night, and temperature, as in RimWorld: winters to prepare for, heat and cold that harm colonists, and seasonal crops.
+- Random events.
 
-### Step 4: The planet
+### Step 5: The planet
 - A whole generated planet, split into tiles. Each tile can be played as its own map.
 - Other factions living on the planet, with diplomacy and war.
 
@@ -67,4 +75,5 @@ Generated voxel maps with layers, caves, ore, mountains, valleys, rivers, trees 
 - **Development platform:** Linux (Nobara).
 - **The simulation is kept apart from presentation.** World data, generation, jobs, and later colonist AI live in plain C# that doesn't depend on Godot. That code can be unit-tested and run headless. Godot handles rendering, input and UI. This matters most from step 2 onward, when the simulation grows complicated.
 - **Determinism:** map generation is fully reproducible from a seed.
+- **Colony size:** the game must eventually handle **100+ colonists per map**. Early steps may target fewer, but no system may be built in a way that blocks this.
 - **Scale:** 1 block is 1 meter. A colonist is about 1.8 blocks tall and needs 2 blocks of headroom.
