@@ -53,7 +53,7 @@ public partial class VisualShots
         await Frames(60);
 
         // (b) The developer's repro: Dig drag from the default view, PgDn×3 while holding.
-        await Key(Godot.Key.Key1);
+        await Key(Godot.Key.Z);
         int before = map.Jobs.Count;
         await Press(Top(ax, h, az));
         await Move(Top(bx, h, bz), held: true);
@@ -73,7 +73,7 @@ public partial class VisualShots
             $"ok:{dug == 80 && inBox == 80 && viewMid == "top" && !slice.IsSliced && Near(focusY, h + 1) && hoverOk}");
 
         // (c) Wall drag from the default view, PgUp×2, then Home (ignored mid-drag).
-        await Key(Godot.Key.Key2);
+        await Key(Godot.Key.C);
         before = map.Jobs.Count;
         await Press(Top(ax, h, az));
         await Move(Top(bx, h, bz), held: true);
@@ -177,5 +177,129 @@ public partial class VisualShots
         await Frames(2);
         bool stays = !hud.LeaveDialog.Visible && _tree.CurrentScene == _scene;
         Metric("menu_leave_confirm", $"unsaved:{unsaved} dialog:{shown} cancel_stays:{stays} ok:{unsaved && shown && stays}");
+    }
+
+    /// <summary>
+    /// <c>edit_burst_apply_ms_max</c>: 30 single-block edits in different chunks, ten per frame over 3 frames; the
+    /// worst per-frame mesh-apply time (must stay within the apply budget plus 2 ms). The blocks are removed again.
+    /// </summary>
+    async Task MeasureEditBurst()
+    {
+        var world = _scene.Map.World;
+        const int s = VoxelWorld.ChunkSize;
+        var placed = new List<(int X, int Y, int Z, ushort Old)>();
+        double maxMs = 0;
+        int columns = world.ChunksX * world.ChunksZ;
+        for (int frame = 0; frame < 3; frame++)
+        {
+            for (int i = 0; i < 10; i++)
+            {
+                int c = (frame * 10 + i) * 7 % columns;
+                int x = c % world.ChunksX * s + s / 2, z = c / world.ChunksX * s + s / 2;
+                int y = world.GetSurfaceHeight(x, z) + 1;
+                placed.Add((x, y, z, world.GetBlock(x, y, z)));
+                world.SetBlock(x, y, z, Blocks.StoneBricks);
+            }
+            for (int f = 0; f < 3; f++)
+            {
+                await NextFrame();
+                maxMs = Math.Max(maxMs, _scene.Chunks.LastApplyMs);
+            }
+        }
+        for (int f = 0; f < 10; f++)
+        {
+            await NextFrame();
+            maxMs = Math.Max(maxMs, _scene.Chunks.LastApplyMs);
+        }
+        Metric("edit_burst_apply_ms_max", maxMs);
+        Metric("edit_burst_ok", maxMs <= ChunkRenderer.FrameBudgetMs + 2 ? 1 : 0);
+        foreach (var (x, y, z, old) in placed) world.SetBlock(x, y, z, old);
+        await WaitForRemesh();
+    }
+
+    /// <summary>
+    /// <c>overlay_incremental_ms</c>: with 50,000 jobs queued, the time for the overlay to apply a one-job change
+    /// (must be &lt; 2 ms). The jobs are removed again.
+    /// </summary>
+    async Task MeasureOverlayIncremental()
+    {
+        var map = _scene.Map;
+        var overlay = _scene.Overlay;
+        var specs = new List<JobSpec>();
+        int y = map.World.SizeY - 2;
+        for (int z = 0; z < 224; z++)
+            for (int x = 0; x < 224; x++) specs.Add(new JobSpec(new Int3(x, y, z), JobKind.Dig, 0));
+        foreach (var spec in specs) map.Jobs.Add(spec);
+        overlay.Refresh(); // the initial build of all chunks
+        await NextFrame();
+
+        var probe = new Int3(100, y - 1, 100);
+        double total = 0, max = 0;
+        const int runs = 20;
+        for (int i = 0; i < runs; i++)
+        {
+            if (i % 2 == 0) map.Jobs.Add(new JobSpec(probe, JobKind.Dig, 0)); else map.Jobs.Remove(probe);
+            long t = Stopwatch.GetTimestamp();
+            overlay.Refresh();
+            double ms = Stopwatch.GetElapsedTime(t).TotalMilliseconds;
+            total += ms;
+            max = Math.Max(max, ms);
+        }
+        map.Jobs.Remove(probe);
+        Metric("overlay_jobs", map.Jobs.Count);
+        Metric("overlay_layers", overlay.LayerCount);
+        Metric("overlay_incremental_ms", total / runs);
+        Metric("overlay_incremental_ms_max", max);
+        foreach (var spec in specs) map.Jobs.Remove(spec.Position);
+        overlay.Refresh();
+        await NextFrame();
+    }
+
+    /// <summary><c>focus_out_cancels_drag</c> and <c>phantom_drag_cancelled</c> (1 = pass).</summary>
+    async Task CheckDragSafety(Site house)
+    {
+        var tools = _scene.Tools;
+        var s = await LevelSite(FlatSite(ToolSiteW, ToolSiteD, house), ToolSiteW, ToolSiteD);
+        await View(s.X + 2, s.Z + 2, _scene.Slice.TopLevel, 0, 60, 36);
+        await Frames(10);
+        static Vector3 Top(int x, int y, int z) => new(x + 0.5f, y + 1, z + 0.5f);
+
+        await Key(Godot.Key.Z);
+        await Press(Top(s.X + 1, s.H, s.Z + 1));
+        await Move(Top(s.X + 3, s.H, s.Z + 3), held: true);
+        bool started = tools.IsDragging;
+        tools.Notification((int)Node.NotificationApplicationFocusOut);
+        Metric("focus_out_cancels_drag", started && !tools.IsDragging ? 1 : 0);
+
+        await Press(Top(s.X + 1, s.H, s.Z + 1));
+        await Move(Top(s.X + 3, s.H, s.Z + 3), held: true);
+        started = tools.IsDragging;
+        await Move(Top(s.X + 4, s.H, s.Z + 4), held: false);
+        Metric("phantom_drag_cancelled", started && !tools.IsDragging ? 1 : 0);
+        await Key(Godot.Key.Escape);
+    }
+
+    /// <summary>
+    /// <c>overlay_kinds</c>: one job of each kind, then an Unreachable and a NeedsWayBack Dig, set by hand; the shot
+    /// should show distinct colors, the unreachable cube dim and the NeedsWayBack cube red. Removed afterwards.
+    /// </summary>
+    async Task ShowOverlayKinds(Site house)
+    {
+        var map = _scene.Map;
+        var s = await LevelSite(FlatSite(ToolSiteW, ToolSiteD, house), ToolSiteW, ToolSiteD);
+        int y = s.H + 1;
+        var kinds = Enum.GetValues<JobKind>();
+        var cells = new List<Int3>();
+        for (int i = 0; i < kinds.Length + 2; i++) cells.Add(new Int3(s.X + 1 + i % 5 * 2, y, s.Z + 2 + i / 5 * 3));
+        for (int i = 0; i < kinds.Length; i++) map.Jobs.Add(new JobSpec(cells[i], kinds[i], Blocks.StoneBricks));
+        var unreachable = map.Jobs.Add(new JobSpec(cells[kinds.Length], JobKind.Dig, 0));
+        var wayBack = map.Jobs.Add(new JobSpec(cells[kinds.Length + 1], JobKind.Dig, 0));
+        map.Jobs.SetStatus(unreachable, JobStatus.Unreachable, 1);
+        map.Jobs.SetStatus(wayBack, JobStatus.NeedsWayBack, 1);
+        await View(s.X + 5, s.Z + 4, _scene.Slice.TopLevel, 0, 55, 14);
+        await Frames(5);
+        await Shoot("overlay_kinds");
+        foreach (var c in cells) map.Jobs.Remove(c);
+        await Frames(2);
     }
 }

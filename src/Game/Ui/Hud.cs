@@ -27,8 +27,9 @@ public partial class Hud : CanvasLayer
 
     static readonly (DesignationTool? Tool, string Key)[] ToolButtons =
     [
-        (null, "Esc"), (DesignationTool.Dig, "1"), (DesignationTool.Wall, "2"), (DesignationTool.Floor, "3"),
-        (DesignationTool.Stairs, "4"), (DesignationTool.Cancel, "5"),
+        (null, "Esc"), (DesignationTool.Dig, "Z"), (DesignationTool.DigStairs, "X"), (DesignationTool.Wall, "C"),
+        (DesignationTool.Floor, "V"), (DesignationTool.Stairs, "B"), (DesignationTool.Ramp, "N"),
+        (DesignationTool.Ladder, "M"), (DesignationTool.Cancel, "Del"),
     ];
 
     MapScene _scene = null!;

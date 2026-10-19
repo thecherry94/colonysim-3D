@@ -73,7 +73,7 @@ public partial class ToolController : Node3D
 
     public event Action? StatusChanged;
 
-    public static string ToolName(DesignationTool? tool) => tool?.ToString() ?? "Camera";
+    public static string ToolName(DesignationTool? tool) => tool switch { null => "Camera", DesignationTool.DigStairs => "Dig stairs", var t => t.ToString()! };
 
     public void Setup(MapScene scene)
     {
@@ -111,7 +111,9 @@ public partial class ToolController : Node3D
             case InputEventMouseMotion motion:
                 _mouse = motion.Position;
                 _mouseOverWorld = false; // set again in _UnhandledInput if no HUD control takes the event
-                if (_dragging) UpdateDragEnd();
+                // A motion without the left button held means the release was lost (focus change, a modal).
+                if (_dragging && !motion.ButtonMask.HasFlag(MouseButtonMask.Left)) AbortDrag();
+                else if (_dragging) UpdateDragEnd();
                 break;
             case InputEventMouseButton { ButtonIndex: MouseButton.Left, Pressed: false } release when _dragging:
                 _mouse = release.Position;
@@ -122,6 +124,19 @@ public partial class ToolController : Node3D
                 if (_dragging && HandleDragLevelInput(@event)) GetViewport().SetInputAsHandled();
                 break;
         }
+    }
+
+    public override void _Notification(int what)
+    {
+        // The release event never arrives once the window loses focus mid-drag.
+        if (what == NotificationWMWindowFocusOut || what == NotificationApplicationFocusOut) AbortDrag();
+    }
+
+    void AbortDrag()
+    {
+        if (!_dragging) return;
+        CancelDrag();
+        Status = ToolHint(_tool);
     }
 
     /// <summary>Mid-drag, level steps extend the box and Home does nothing; returns whether it took the event.</summary>
@@ -161,7 +176,7 @@ public partial class ToolController : Node3D
 
         if (@event.IsActionPressed(InputActions.ToolCamera))
         {
-            if (_dragging) { CancelDrag(); Status = ToolHint(_tool); }
+            if (_dragging) AbortDrag();
             else ActiveTool = null;
         }
         else if (@event.IsActionPressed(InputActions.MaterialCycle))
@@ -193,9 +208,12 @@ public partial class ToolController : Node3D
 
     static DesignationTool? HotkeyTool(InputEvent e) =>
         e.IsActionPressed(InputActions.ToolDig) ? DesignationTool.Dig
+        : e.IsActionPressed(InputActions.ToolDigStairs) ? DesignationTool.DigStairs
         : e.IsActionPressed(InputActions.ToolWall) ? DesignationTool.Wall
         : e.IsActionPressed(InputActions.ToolFloor) ? DesignationTool.Floor
         : e.IsActionPressed(InputActions.ToolStairs) ? DesignationTool.Stairs
+        : e.IsActionPressed(InputActions.ToolRamp) ? DesignationTool.Ramp
+        : e.IsActionPressed(InputActions.ToolLadder) ? DesignationTool.Ladder
         : e.IsActionPressed(InputActions.ToolCancel) ? DesignationTool.Cancel
         : null;
 
@@ -272,6 +290,9 @@ public partial class ToolController : Node3D
         DesignationTool.Wall => "Wall: drag a rectangle to build walls around its outline. Hold and press PgUp for taller walls.",
         DesignationTool.Floor => "Floor: drag to fill a rectangle with floor. Go up a level to put a floor on top of walls.",
         DesignationTool.Stairs => "Stairs: drag in the direction the stairs should climb, one block up per step.",
+        DesignationTool.DigStairs => "Dig stairs: drag in the direction to climb; carves a staircase out of solid ground, one block up per step.",
+        DesignationTool.Ramp => "Ramp: drag in the direction the ramp should climb, one block up per step.",
+        DesignationTool.Ladder => "Ladder: drag over open cells next to a wall; each gets a ladder mounted on it. Hold and press PgUp for a taller ladder.",
         _ => "Cancel: drag over marked jobs to remove them.",
     };
 

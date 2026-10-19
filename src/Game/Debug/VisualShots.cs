@@ -105,6 +105,10 @@ public partial class VisualShots : Node
             // The tool site now has walls, so this picks a fresh one.
             (null, async () => await CheckUnslicedTools(await LevelSite(FlatSite(ToolSiteW, ToolSiteD, house), ToolSiteW, ToolSiteD))),
             (null, MeasureEditStream),
+            (null, MeasureEditBurst),
+            (null, MeasureOverlayIncremental),
+            (null, () => CheckDragSafety(house)),
+            (null, () => ShowOverlayKinds(house)),
             ("cave_hidden", () => FindHiddenCave(house)),
             ("cave_revealed", RevealCave),
         ];
@@ -440,7 +444,7 @@ public partial class VisualShots : Node
         await Frames(30);
 
         // Hover: shows the mouse mapping is right (the wire box sits on the cell under the synthetic cursor).
-        await Key(Godot.Key.Key1);
+        await Key(Godot.Key.Z);
         results.Add($"tool_key:{ToolController.ToolName(tools.ActiveTool)}");
         await Move(Top(ax, h, az));
         var hover = tools.GetNode<Node3D>("Hover");
@@ -457,14 +461,14 @@ public partial class VisualShots : Node
         results.Add($"top_drag:{map.Jobs.Count - before}/20(at_ground:{dug})");
 
         // Cancel over the same rectangle.
-        await Key(Godot.Key.Key5);
+        await Key(Godot.Key.Delete);
         await Press(Top(ax, h, az));
         await Move(Top(bx, h, bz), held: true);
         await Release(Top(bx, h, bz));
         results.Add($"cancel:{map.Jobs.Count - before}_left");
 
         // Esc cancels a drag, then a second Esc returns to the Camera tool.
-        await Key(Godot.Key.Key1);
+        await Key(Godot.Key.Z);
         await Press(Top(ax, h, az));
         await Move(Top(bx, h, bz), held: true);
         await Key(Godot.Key.Escape);
@@ -481,7 +485,7 @@ public partial class VisualShots : Node
         await Frames(60); // the camera eases to the new level
 
         // Wall drag in that slice, made 3 levels tall with PgUp mid-drag; Tab switches to stone first.
-        await Key(Godot.Key.Key2);
+        await Key(Godot.Key.C);
         await Key(Godot.Key.Tab);
         results.Add($"tab:{tools.Material}");
         before = map.Jobs.Count;
@@ -498,7 +502,7 @@ public partial class VisualShots : Node
         int cut = h - 2;
         await View(ax + 2, az + 2, cut, 0, 60, 36);
         await Frames(30);
-        await Key(Godot.Key.Key1);
+        await Key(Godot.Key.Z);
         before = map.Jobs.Count;
         await Press(Top(ax, cut, az));
         await Move(Top(bx, cut, bz), held: true);
