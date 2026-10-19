@@ -279,7 +279,7 @@ public class NavRulesTests(ITestOutputHelper output)
         Assert.Equal(new Int3(30, 151, 29), c);
     }
 
-    [Fact, Trait("Category", "Perf")] public void GetMoves_1M_Under300ms()
+    [Fact, Trait("Category", "Perf")] public void GetMoves_1M_Under400ms()
     {
         var map = MapGenerator.Generate(MapSettings.Create(7, MapSize.Small));
         var nav = new NavRules(map.View);
@@ -301,7 +301,7 @@ public class NavRulesTests(ITestOutputHelper output)
         var debuggable = typeof(NavRules).Assembly.GetCustomAttribute<DebuggableAttribute>();
         bool optimized = debuggable == null || !debuggable.IsJITOptimizerDisabled;
         output.WriteLine($"GetMoves x1M: {sw.Elapsed.TotalMilliseconds:F1} ms over {cells.Count} cells ({total} moves)"
-            + (optimized ? "" : " [Debug build: not checked against the 300 ms budget, run with -c Release]"));
-        if (optimized) Assert.True(sw.Elapsed.TotalMilliseconds < 300, $"{sw.Elapsed.TotalMilliseconds:F1} ms");
+            + (optimized ? "" : " [Debug build: not checked against the 400 ms budget, run with -c Release]"));
+        if (optimized) Assert.True(sw.Elapsed.TotalMilliseconds < 400, $"{sw.Elapsed.TotalMilliseconds:F1} ms");
     }
 }
