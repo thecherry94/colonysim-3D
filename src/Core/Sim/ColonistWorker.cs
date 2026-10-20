@@ -4,13 +4,16 @@ namespace ColonySim.Core;
 /// Each colonist's work, one tick at a time (after the <see cref="ColonistMover"/>):
 /// <list type="bullet">
 /// <item><b>Choosing:</b> an idle colonist without a job looks for something to do on ticks where (tick + id) % 10 == 0.
-/// For now that is work (<see cref="JobFinder"/>); it claims the job and walks to the work spot.</item>
+/// For now that is work (<see cref="JobFinder"/>); it claims the job and walks to the work spot. Finding none while it
+/// is in the way of a job that could be done now (on a block to dig, or in a build's cell), it steps aside, so that job
+/// isn't held up by it for good.</item>
 /// <item><b>Navigation first:</b> searching and finishing need navigation that includes every edit so far, also those
 /// made earlier in the same tick (<see cref="Simulation.TrySyncNav"/>). Once the tick's budget for that is spent, a
 /// search is put off to the next tick, and a finished job is held, at full progress, until then.</item>
 /// <item><b>Working:</b> at the spot, each tick adds work at its skill's speed and one experience; at
-/// <see cref="WorkRules.WorkTicks"/> the job is applied (<see cref="WorkCompletion"/>) and the colonist goes idle. A
-/// build waits, with no progress, while a colonist's body is in the cell.</item>
+/// <see cref="WorkRules.WorkTicks"/> the job is applied (<see cref="WorkCompletion"/>) and the colonist goes idle. It
+/// waits, with no progress, while someone is in the way (<see cref="WorkCompletion.IsInTheWay"/>): in a build's cell,
+/// or on a block being dug.</item>
 /// <item><b>Before finishing,</b> the strand check runs again if navigation changed since it passed, and always for a
 /// build (others may have walked in behind the wall meanwhile); failing, the job is marked
 /// <see cref="JobStatus.NeedsWayBack"/> as the <see cref="JobFinder"/> marks it, and dropped.</item>
@@ -40,6 +43,33 @@ internal sealed class ColonistWorker(Simulation sim)
         c.SearchPending = !sim.TrySyncNav();
         if (c.SearchPending) return;
         if (TryStartWork(c)) return;
+        StepAside(c);
+    }
+
+    /// <summary>
+    /// Out of the way of a ready job (<see cref="InTheWayOfReady"/>), onto a cell one move away (so in its component:
+    /// home if it is home) that isn't in the way of one too. One path request at most per search.
+    /// </summary>
+    void StepAside(Colonist c)
+    {
+        if (!InTheWayOfReady(c.Cell)) return;
+        Span<Move> moves = stackalloc Move[NavRules.MaxMoves];
+        int n = sim.Nav.Rules.GetMoves(c.Cell, moves);
+        for (int i = 0; i < n; i++)
+            if (!InTheWayOfReady(moves[i].To))
+            {
+                sim.GoTo(c, moves[i].To);
+                return;
+            }
+    }
+
+    /// <summary>A colonist standing at the cell holds up a ready job: it is on a block to dig, or its body is in a build's cell.</summary>
+    bool InTheWayOfReady(Int3 cell)
+    {
+        return Ready(cell + Int3.Down, build: false) || Ready(cell, build: true) || Ready(cell + Int3.Up, build: true);
+
+        bool Ready(Int3 p, bool build) =>
+            Jobs.TryGet(p, out var j) && (build ? WorkRules.IsBuild(j.Kind) : j.Kind == JobKind.Dig) && WorkRules.IsReady(sim.Map, j);
     }
 
     bool TryStartWork(Colonist c)
@@ -87,7 +117,7 @@ internal sealed class ColonistWorker(Simulation sim)
             Done(c);
             return;
         }
-        if (WorkRules.IsBuild(job.Kind) && WorkCompletion.IsOccupied(map, job.Position)) return; // wait for them to move
+        if (WorkCompletion.IsInTheWay(map, job)) return; // wait for them to move
 
         int ticks = WorkRules.WorkTicks(job, WorkRules.Target(map, job));
         if (job.Progress < ticks)
@@ -112,7 +142,7 @@ internal sealed class ColonistWorker(Simulation sim)
             }
             c.CheckedAt = sim.Nav.Version;
         }
-        // Nobody moved since the occupancy check above, so the build goes in.
+        // Nobody moved since the check above that nobody is in the way, so the job goes through.
         WorkCompletion.Complete(map, job);
         Done(c);
     }

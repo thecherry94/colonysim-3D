@@ -3,7 +3,7 @@ namespace ColonySim.Core;
 /// <summary>
 /// Debug "instant work" mode: completes queued jobs without colonists.
 /// Order: all digs (incl. stair carving) top-down (highest Y first), then builds bottom-up; ties by X, then Z.
-/// A build into a cell a colonist's body is in is skipped and kept until they move.
+/// A job a colonist is in the way of (<see cref="WorkCompletion.IsInTheWay"/>) is skipped and kept until they move.
 /// </summary>
 public static class InstantWorker
 {
@@ -17,7 +17,7 @@ public static class InstantWorker
             Comparer<(int Phase, int Y, int X, int Z)>.Create((a, b) => b.CompareTo(a)));
         foreach (var job in map.Jobs.All)
         {
-            if (IsBuild(job) && WorkCompletion.IsOccupied(map, job.Position)) continue; // waits for the colonist to move
+            if (WorkCompletion.IsInTheWay(map, job)) continue; // waits for the colonist to move
             var key = KeyOf(job);
             if (heap.Count < maxJobs) heap.Enqueue(job, key);
             else if (heap.TryPeek(out _, out var worst) && key.CompareTo(worst) < 0)
@@ -38,8 +38,6 @@ public static class InstantWorker
         }
         return done;
     }
-
-    static bool IsBuild(Job j) => j.Kind is not (JobKind.Dig or JobKind.CarveStairs);
 
     static (int Phase, int Y, int X, int Z) KeyOf(Job j) =>
         j.Kind is JobKind.Dig or JobKind.CarveStairs

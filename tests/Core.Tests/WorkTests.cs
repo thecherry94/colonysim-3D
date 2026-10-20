@@ -243,9 +243,11 @@ public class WorkTests
         for (int i = 0; i < 4; i++)
             for (int k = 0; k < 4; k++)
                 workers.Add((Worker(sim, new Int3(10 + 32 * i, 151, 10 + 32 * k)), Dig(map, new Int3(13 + 32 * i, 150, 10 + 32 * k))));
-        var late = Worker(sim, new Int3(20, 151, 20), miningPriority: 0, constructionPriority: 0); // steps after them all
+        var late = Worker(sim, new Int3(20, 151, 20), miningPriority: 0, constructionPriority: 0); // last in the list
         Run(sim, () => workers.All(w => w.C.Activity == ColonistActivity.Working));
-        while ((map.Colony.Tick + late.Id) % ColonistWorker.SearchInterval != 0) sim.Tick();
+        // On a tick it searches, and doesn't step first (see FirstToStep_TurnsWithTheTick).
+        int count = map.Colony.Colonists.Count;
+        while ((map.Colony.Tick + late.Id) % ColonistWorker.SearchInterval != 0 || map.Colony.Tick % count == count - 1) sim.Tick();
         // All one work tick (0.5 at level 0) from done.
         foreach (var (_, j) in workers) map.Jobs.AddProgress(j, 100 - 0.25f - j.Progress);
 
@@ -267,6 +269,31 @@ public class WorkTests
         // It searched as soon as there was budget left after the others, not at its next turn in the stagger.
         Run(sim, () => !late.SearchPending, 1);
         Assert.All(held, w => Assert.Equal(xp[w.C], w.C.Skills[(int)SkillType.Mining].Xp));
+    }
+
+    [Fact] public void FirstToStep_TurnsWithTheTick()
+    {
+        // With no mid-tick budget only the first finish of a tick goes through, so who that is shows who stepped first:
+        // colonist (tick mod count), so none is always left what remains of the tick's budget.
+        var map = TestWorlds.FlatMap(128);
+        var sim = new Simulation(map);
+        var workers = new List<(Colonist C, Job J)>();
+        for (int i = 0; i < 4; i++) workers.Add((Worker(sim, new Int3(10 + 32 * i, 151, 10)), Dig(map, new Int3(13 + 32 * i, 150, 10))));
+        Run(sim, () => workers.All(w => w.C.Activity == ColonistActivity.Working));
+        while (map.Colony.Tick % workers.Count != 1) sim.Tick();
+        sim.SyncBudgetMs = 0;
+        var order = new List<int>();
+        for (int round = 0; round < workers.Count; round++)
+        {
+            foreach (var (_, j) in workers.Where(w => map.Jobs.Contains(w.J.Position))) map.Jobs.AddProgress(j, 100 - 0.25f - j.Progress);
+            int first = (int)(map.Colony.Tick % workers.Count);
+            int expected = Enumerable.Range(0, workers.Count).Select(k => (first + k) % workers.Count).First(k => map.Jobs.Contains(workers[k].J.Position));
+            sim.Tick();
+            var done = Enumerable.Range(0, workers.Count).Where(k => !order.Contains(k) && !map.Jobs.Contains(workers[k].J.Position)).ToList();
+            Assert.Equal(new[] { expected }, done);
+            order.Add(expected);
+        }
+        Assert.Equal(new[] { 1, 2, 3, 0 }, order);
     }
 
     [Fact] public void Search_RemembersNothingFound_AndGoesOnAfterTheCap()
@@ -325,25 +352,105 @@ public class WorkTests
     {
         var map = TestWorlds.FlatMap();
         var sim = new Simulation(map);
-        var idle = Worker(sim, new Int3(30, 151, 32), miningPriority: 0, constructionPriority: 0);
-        var builder = Worker(sim, new Int3(36, 151, 32), construction: 5);
+        var occupant = Worker(sim, new Int3(30, 151, 32), constructionPriority: 0);
+        var builder = Worker(sim, new Int3(36, 151, 32), construction: 5, miningPriority: 0, constructionPriority: 0);
         var job = Wall(map, new Int3(30, 151, 32));
-        Run(sim, () => builder.Activity == ColonistActivity.Working);
-        for (int t = 0; t < 100; t++)
-        {
-            sim.Tick();
-            Assert.Equal(0f, job.Progress);
-        }
-        Assert.Equal(ColonistActivity.Working, builder.Activity);
-        // Instant work skips it too, keeping the job (and doesn't count it as done).
+        // Instant work skips it, keeping the job (and doesn't count it as done).
         Assert.Equal(0, InstantWorker.Step(map, 10));
         Assert.True(map.Jobs.Contains(job.Position));
         Assert.Equal(Blocks.Air, map.World.GetBlock(30, 151, 32));
 
-        sim.GoTo(idle, new Int3(26, 151, 32));
+        // The occupant busy digging from where it stands: the builder waits for it, with no progress.
+        Dig(map, new Int3(29, 150, 32));
+        Run(sim, () => occupant.Activity == ColonistActivity.Working);
+        Assert.Equal(new Int3(30, 151, 32), occupant.Cell);
+        builder.Priorities[ConstructionIndex] = 3;
+        Run(sim, () => builder.Activity == ColonistActivity.Working);
+        while (occupant.JobId != 0)
+        {
+            sim.Tick();
+            Assert.Equal(0f, job.Progress);
+        }
+
+        // Done, with nothing else to do, the occupant steps out of the way by itself, and the wall goes up.
         Run(sim, () => map.Jobs.Count == 0);
         Assert.Equal(Blocks.WoodPlanks, map.World.GetBlock(30, 151, 32));
-        Assert.NotEqual(new Int3(30, 151, 32), idle.Cell);
+        Assert.NotEqual(new Int3(30, 151, 32), occupant.Cell);
+        Assert.False(occupant.Stuck);
+    }
+
+    [Fact] public void Builders_InEachOthersWay_BothBuild()
+    {
+        // A corridor one wide between plank walls. A builds the wall at 25 from 26 while B, busy at 25, is in its way;
+        // then B, done there, takes the wall at 26. Working it from where it stands (25) would leave each waiting for
+        // the other to move, for good.
+        var map = TestWorlds.FlatMap();
+        Fill(map, 20, 30, 151, 152, 19, 19, Blocks.WoodPlanks);
+        Fill(map, 20, 30, 151, 152, 21, 21, Blocks.WoodPlanks);
+        var sim = new Simulation(map);
+        var a = Worker(sim, new Int3(26, 151, 20), miningPriority: 0, constructionPriority: 0);
+        var b = Worker(sim, new Int3(25, 151, 20), constructionPriority: 0);
+        Dig(map, new Int3(24, 150, 20));
+        Run(sim, () => b.Activity == ColonistActivity.Working);
+        Assert.Equal(new Int3(25, 151, 20), b.Cell);
+
+        var first = Wall(map, new Int3(25, 151, 20));
+        a.Priorities[ConstructionIndex] = 3;
+        Run(sim, () => a.JobId == first.Id && a.Activity == ColonistActivity.Working);
+        Assert.Equal(new Int3(26, 151, 20), a.Cell);
+        var second = Wall(map, new Int3(26, 151, 20));
+        b.Priorities[ConstructionIndex] = 3;
+
+        for (int t = 0; t < 3000 && map.Jobs.Count > 0; t++) sim.Tick();
+        Assert.True(map.Jobs.Count == 0, "left: " + string.Join("; ", map.Jobs.All.Select(j => $"{j.Position} by {j.ClaimedBy}"))
+            + $"; a {a.Cell} {a.Activity}, b {b.Cell} {b.Activity}");
+        Assert.Equal(Blocks.WoodPlanks, map.World.GetBlock(26, 151, 20));
+        Assert.All(map.Colony.Colonists, c => Assert.False(c.Stuck, $"{c.Name} at {c.Cell}"));
+    }
+
+    [Fact] public void Dig_UnderAnotherColonist_Waits()
+    {
+        var map = TestWorlds.FlatMap();
+        var sim = new Simulation(map);
+        var idle = Worker(sim, new Int3(33, 151, 32), miningPriority: 0, constructionPriority: 0);
+        var miner = Worker(sim, new Int3(29, 151, 32), mining: 5);
+        var job = Dig(map, new Int3(33, 150, 32));
+        bool fell = false;
+        bool Fell() => fell |= map.Colony.Colonists.Any(c => c.Activity == ColonistActivity.Falling);
+
+        // Nothing is dug from under someone: neither by completing the job nor by instant work.
+        Assert.False(WorkCompletion.Complete(map, job));
+        Assert.Equal(0, InstantWorker.Step(map, 10));
+        Assert.True(map.Jobs.Contains(job.Position));
+        Assert.Equal(Blocks.Stone, map.World.GetBlock(33, 150, 32));
+
+        // The idle colonist steps aside (staying home), then the block is dug; nobody falls.
+        Run(sim, () => Fell() | map.Jobs.Count == 0);
+        Assert.False(fell, "someone fell");
+        Assert.Equal(Blocks.Air, map.World.GetBlock(33, 150, 32));
+        Assert.False(idle.Stuck);
+
+        // Someone walking onto a block being dug: no progress while they are on it (or on their way onto it).
+        var next = Dig(map, new Int3(36, 150, 32));
+        Run(sim, () => miner.JobId == next.Id && miner.Activity == ColonistActivity.Working && next.Progress > 0);
+        sim.GoTo(idle, next.Position + Int3.Up);
+        int waited = 0;
+        Run(sim, () =>
+        {
+            bool before = map.Colony.Bodies.IsOccupied(next.Position + Int3.Up);
+            float progress = next.Progress;
+            sim.Tick();
+            if (before && map.Colony.Bodies.IsOccupied(next.Position + Int3.Up) && map.Jobs.Contains(next.Position))
+            {
+                Assert.Equal(progress, next.Progress);
+                waited++;
+            }
+            return Fell() | map.Jobs.Count == 0;
+        });
+        Assert.False(fell, "someone fell");
+        Assert.True(waited > 0);
+        Assert.Equal(Blocks.Air, map.World.GetBlock(36, 150, 32));
+        Assert.All(map.Colony.Colonists, c => Assert.False(c.Stuck, $"{c.Name} at {c.Cell}"));
     }
 
     [Fact] public void WorkSpots_AndReadiness()

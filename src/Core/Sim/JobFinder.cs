@@ -15,6 +15,10 @@ namespace ColonySim.Core;
 /// <see cref="JobStatus.NeedsWayBack"/> and the search goes on. When only other colonists would be sealed in, the
 /// mark is made at version 0 with the tick: where they are isn't something navigation versions track, so the job is
 /// looked at again after <see cref="SealRecheckTicks"/>, and taken once they are out.</item>
+/// <item>Jobs other colonists are in the way of are held back the same way: a dig someone stands on (or is stepping
+/// onto), and a job whose only spots would put the colonist in the way of a job someone else has claimed (its body in
+/// a build's cell, or its feet on a block being dug); such spots are passed over. So no two colonists ever end up each
+/// waiting for the other to move.</item>
 /// </list>
 /// What bounds a search when nothing valid is near:
 /// <list type="bullet">
@@ -38,7 +42,7 @@ internal sealed class JobFinder
     /// <summary>What a strand check (possibly a navigation preview) counts against <see cref="MaxChecks"/>.</summary>
     public const int StrandCheckCost = 64;
 
-    /// <summary>Ticks before a job held back for sealing others in is looked at again.</summary>
+    /// <summary>Ticks before a job held back for other colonists (it would seal them in, or they are in the way) is looked at again.</summary>
     public const int SealRecheckTicks = 60;
 
     /// <summary>Where a colonist's pass over a work type has got to: everything before (ring, d2, id) from <see cref="At"/> was checked and isn't valid.</summary>
@@ -51,7 +55,7 @@ internal sealed class JobFinder
     readonly PriorityQueue<Job, (int D2, long Id)> _candidates = new();
     readonly List<(Job, (int, long))> _gathered = new();
     readonly HashSet<Job> _moot = new();
-    readonly HashSet<Job> _sealing = new();
+    readonly HashSet<Job> _heldBack = new();
     readonly int[] _typeOrder = new int[WorkTypes.All.Count];
     readonly Dictionary<(int Type, int Component), Nothing> _nothing = new();
     readonly Dictionary<(int Colonist, int Type), Cursor> _cursors = new();
@@ -96,15 +100,21 @@ internal sealed class JobFinder
                             return false; // the next search goes on from here
                         }
                         if (candidate == null) break;
-                        _checks += StrandCheckCost;
-                        switch (TrySpots(sim, c, at, component, candidate, out workSpot))
+                        var result = SpotResult.HeldBack;
+                        workSpot = default;
+                        if (!(candidate.Kind == JobKind.Dig && WorkCompletion.IsInTheWay(sim.Map, candidate)))
+                        {
+                            _checks += StrandCheckCost;
+                            result = TrySpots(sim, c, at, component, candidate, out workSpot);
+                        }
+                        switch (result)
                         {
                             case SpotResult.Found:
                                 _cursors.Remove((c.Id, ti));
                                 job = candidate;
                                 return true;
-                            case SpotResult.SealsOthers:
-                                _sealing.Add(candidate);
+                            case SpotResult.HeldBack:
+                                _heldBack.Add(candidate);
                                 jobs.SetStatus(candidate, JobStatus.NeedsWayBack, 0, tick);
                                 _dueAt = Math.Min(_dueAt, tick + SealRecheckTicks);
                                 break;
@@ -122,7 +132,7 @@ internal sealed class JobFinder
         finally
         {
             LastChecks = _checks;
-            _sealing.Clear();
+            _heldBack.Clear();
             // Cleared only now: their edits would change navigation in the middle of the search.
             foreach (var moot in _moot)
                 if (jobs.TryGetById(moot.Id, out _)) WorkRules.DropMoot(sim.Map, moot);
@@ -190,7 +200,7 @@ internal sealed class JobFinder
                         continue;
                     }
                 }
-                if (_moot.Contains(j) || _sealing.Contains(j)) continue;
+                if (_moot.Contains(j) || _heldBack.Contains(j)) continue;
                 _gathered.Add((j, (d2, j.Id)));
             }
             // Nearest first: a heap, as usually the first one or two are taken and the rest never looked at.
@@ -229,9 +239,16 @@ internal sealed class JobFinder
         return false;
     }
 
-    enum SpotResult { Found, NoWayBack, SealsOthers }
+    /// <summary>
+    /// How trying a job's spots went. <see cref="SpotResult.HeldBack"/>: other colonists keep it from being done now
+    /// (it would seal them in, or they are in the way), so it is looked at again after <see cref="SealRecheckTicks"/>.
+    /// </summary>
+    enum SpotResult { Found, NoWayBack, HeldBack }
 
-    /// <summary>The first of the job's reachable spots, in spot order, that the strand check allows.</summary>
+    /// <summary>
+    /// The first of the job's reachable spots, in spot order, that the strand check allows, passing over those in the
+    /// way of someone else's claimed job (<see cref="InTheWayOfOthers"/>).
+    /// </summary>
     static SpotResult TrySpots(Simulation sim, Colonist c, Int3 at, int component, Job job, out Int3 workSpot)
     {
         Span<Int3> all = stackalloc Int3[WorkRules.MaxWorkSpots];
@@ -250,14 +267,35 @@ internal sealed class JobFinder
         spots[..m].Sort((a, b) => a.Key.CompareTo(b.Key));
         var edit = StrandCheck.Edit.Of(sim, job);
         workSpot = default;
+        bool passedOver = false;
         for (int i = 0; i < m; i++)
+        {
+            if (InTheWayOfOthers(sim.Map.Jobs, c, spots[i].Spot))
+            {
+                passedOver = true;
+                continue;
+            }
             if (edit.LeavesWayBack(c, spots[i].Spot))
             {
-                if (edit.SealsOthers(c)) return SpotResult.SealsOthers;
+                if (edit.SealsOthers(c)) return SpotResult.HeldBack;
                 workSpot = spots[i].Spot;
                 return SpotResult.Found;
             }
-        return SpotResult.NoWayBack;
+        }
+        return passedOver ? SpotResult.HeldBack : SpotResult.NoWayBack;
+    }
+
+    /// <summary>
+    /// Working from the spot would put the colonist in the way of a job another colonist has claimed (and may be
+    /// waiting at): its body in a build's cell, or its feet on a block being dug.
+    /// </summary>
+    static bool InTheWayOfOthers(JobQueue jobs, Colonist c, Int3 spot)
+    {
+        return Claimed(spot, build: true) || Claimed(spot + Int3.Up, build: true) || Claimed(spot + Int3.Down, build: false);
+
+        bool Claimed(Int3 cell, bool build) =>
+            jobs.TryGet(cell, out var j) && j.ClaimedBy != 0 && j.ClaimedBy != c.Id
+            && (build ? WorkRules.IsBuild(j.Kind) : j.Kind == JobKind.Dig);
     }
 
     /// <summary>No solid block (as the colony knows it) within <see cref="SkyCheck"/> above the cell.</summary>

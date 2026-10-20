@@ -58,14 +58,21 @@ public sealed class Simulation
     /// <summary><see cref="MidTickSyncBudgetMs"/>, changeable for tests.</summary>
     internal double SyncBudgetMs { get; set; } = MidTickSyncBudgetMs;
 
-    /// <summary>One simulation step: navigation, then paths, then each colonist (moving, then working), then the clock.</summary>
+    /// <summary>
+    /// One simulation step: navigation, then paths, then each colonist (moving, then working), then the clock. The
+    /// colonists go in list order from a different one each tick (tick mod count), so none is always the one left with
+    /// what remains of the tick's budget for navigation syncs.
+    /// </summary>
     public void Tick()
     {
         _midTickSync.Reset();
         SyncNav();
         Paths.Process(PathBudget);
-        foreach (var c in Colony.Colonists)
+        var colonists = Colony.Colonists;
+        int n = colonists.Count, first = n > 0 ? (int)(Colony.Tick % n) : 0;
+        for (int i = 0; i < n; i++)
         {
+            var c = colonists[(first + i) % n];
             _mover.Step(c);
             _worker.Step(c);
         }
