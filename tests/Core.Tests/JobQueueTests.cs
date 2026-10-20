@@ -84,6 +84,22 @@ public class JobQueueTests
         }
     }
 
+    [Fact] public void Dig_WaitsForDigsOneUpInTheNeighbouringColumns()
+    {
+        // So no column of a dig runs more than one level ahead of its neighbours, leaving a pillar no one can reach.
+        var q = new JobQueue();
+        var low = q.Add(new JobSpec(new(10, 20, 10), JobKind.Dig, Blocks.Air));
+        var side = q.Add(new JobSpec(new(11, 21, 9), JobKind.CarveStairs, Blocks.Stone));
+        Assert.True(side.WaitingFor == 0);
+        Assert.Equal(1, low.WaitingFor);
+        var far = q.Add(new JobSpec(new(12, 21, 10), JobKind.Dig, Blocks.Air)); // two columns over: no wait
+        var level = q.Add(new JobSpec(new(9, 20, 10), JobKind.Dig, Blocks.Air)); // same level: no wait
+        Assert.Equal((1, 0, 0), (low.WaitingFor, far.WaitingFor, level.WaitingFor));
+        q.Remove(side.Position);
+        Assert.Equal(0, low.WaitingFor);
+        Assert.Equal(3, q.ReadyCount);
+    }
+
     [Fact] public void Readiness_DigsTopDown_BuildsBottomUp_TrackedThroughChanges()
     {
         // Random adds, replacements and removals in a small box; after each, readiness must match the rule worked out
@@ -103,7 +119,14 @@ public class JobQueueTests
             {
                 var o = j.Position;
                 if (IsDig(j.Kind))
-                    return Enumerable.Range(1, 3).All(k => !(q.TryGet(o + new Int3(0, k, 0), out var a) && IsDig(a.Kind)));
+                {
+                    bool DigAt(Int3 c) => q.TryGet(c, out var a) && IsDig(a.Kind);
+                    if (Enumerable.Range(1, 3).Any(k => DigAt(o + new Int3(0, k, 0)))) return false;
+                    for (int dz = -1; dz <= 1; dz++)
+                        for (int dx = -1; dx <= 1; dx++)
+                            if ((dx != 0 || dz != 0) && DigAt(o + new Int3(dx, 1, dz))) return false;
+                    return true;
+                }
                 for (int k = 1; k <= 4; k++)
                     for (int dz = -1; dz <= 1; dz++)
                         for (int dx = -1; dx <= 1; dx++)

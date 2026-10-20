@@ -4,9 +4,11 @@ namespace ColonySim.Core;
 /// Pending jobs keyed by cell, with ids, claims, progress and a per-chunk spatial index.
 /// <para>
 /// It also keeps the work order: digs and carves go top-down, builds bottom-up. A dig or carve waits while a dig or
-/// carve is 1–3 cells straight above it; a build waits while another build is 1–4 cells below it, in its column or a
-/// neighbouring one. The waiting counts are kept up to date as jobs come and go, and each chunk lists its ready jobs
-/// apart, by kind, so a job search only ever looks at jobs of the kinds it wants that can be worked now.
+/// carve is 1–3 cells straight above it, or one cell up in a neighbouring column (so no column of a dig gets more than
+/// a level ahead of the next, leaving a pillar too tall to reach the top of); a build waits while another build is 1–4
+/// cells below it, in its column or a neighbouring one. The waiting counts are kept up to date as jobs come and go,
+/// and each chunk lists its ready jobs apart, by kind, so a job search only ever looks at jobs of the kinds it wants
+/// that can be worked now.
 /// </para>
 /// </summary>
 public sealed class JobQueue
@@ -221,6 +223,13 @@ public sealed class JobQueue
                 if (delta > 0 && IsDigAt(p + Int3.Up * k)) job.WaitingFor++;
                 if (_jobs.TryGetValue(p - Int3.Up * k, out var below) && IsDig(below.Kind)) Wait(below, delta);
             }
+            for (int dz = -1; dz <= 1; dz++)
+                for (int dx = -1; dx <= 1; dx++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    if (delta > 0 && IsDigAt(p + new Int3(dx, 1, dz))) job.WaitingFor++;
+                    if (_jobs.TryGetValue(p + new Int3(dx, -1, dz), out var below) && IsDig(below.Kind)) Wait(below, delta);
+                }
             return;
         }
         for (int k = 1; k <= 4; k++)
