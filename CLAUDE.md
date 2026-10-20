@@ -2,6 +2,22 @@
 
 A RimWorld-like colony sim with Minecraft-like voxels, built by a solo hobby developer. It might become a cheap indie game on Steam. Start fresh: never reference or reuse the developer's earlier colonysim attempt.
 
+The developer has made a few small hobby projects with Godot and C# before. They talk casually and want results that are direct and honest.
+
+## Setup on a new device
+1. Install the Godot 4.7.2 **.NET** build and put it on your PATH as `godot`. On the original machine it lives in `~/.local/share/godot/4.7.2-mono/`, symlinked to `~/.local/bin/godot`.
+2. Install the .NET 10 SDK; the original machine has 10.0.104.
+3. Install the superpowers plugin in Claude Code, version 7.0.0 from the `claude-plugins-official` marketplace: `/plugin install superpowers@claude-plugins-official`.
+4. Clone, then run `dotnet build ColonySim.sln` and the tests below.
+5. Open the project in Godot once so it imports assets and creates `.godot/`, which is git-ignored. After that the harness command below works.
+
+## Keeping this repo self-contained
+The repo must hold everything needed to continue from a fresh clone on any device, so don't rely on anything stored only on the local machine.
+- Project state, decisions and follow-ups go in this file or in `docs/superpowers/`.
+- Specs go in `specs/`, plans (with their Results and Execution rulings sections) in `plans/`, and open follow-ups in `notes/`.
+- Scratch workspaces such as `.superpowers/` (the SDD ledger, briefs, review diffs) are git-ignored and deleted after a step. Before deleting one, copy anything that matters into the plan or into `notes/`.
+- Local Claude memory may hold pointers, never the only copy of a fact.
+
 ## Stack
 - Godot 4.7.2 .NET (C#) on Linux, with the .NET 10 SDK.
 - `src/Core` (`ColonySim.Core`) is plain C# with no Godot dependency, targeting net8.0 with RollForward LatestMajor. All simulation code lives here and is unit tested.
