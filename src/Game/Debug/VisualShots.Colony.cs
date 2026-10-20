@@ -749,8 +749,9 @@ public partial class VisualShots
     /// lifted and times the frames after the first <see cref="BenchSkipSeconds"/>. Frame times are wall-clock intervals
     /// between frames; tick times are the runner's, read on each frame a tick ran (at 1× that is at most one per frame).
     /// Records <c>bench_N_frame_ms_avg</c>/<c>_p99</c>/<c>_max</c>, <c>bench_N_tick_ms_avg</c>/<c>_max</c>,
-    /// <c>bench_N_paths_pending_max</c>, a profile (render CPU and GPU time per frame, tick p99) and what the colonists were
-    /// doing at the end. For 20, <c>bench_20_ok</c> checks the limits (avg ≤ 16.7 ms, p99 ≤ 25 ms).
+    /// <c>bench_N_paths_pending_max</c>, <c>bench_N_jobs_done</c>/<c>_left</c>, a profile (render CPU and GPU time per frame,
+    /// tick p99) and what the colonists were doing at the end. For 20, <c>bench_20_ok</c> checks the limits (avg ≤ 16.7 ms,
+    /// p99 ≤ 25 ms), that all 20 are there and that work got done.
     /// </summary>
     async Task MeasureBench(int n)
     {
@@ -761,6 +762,7 @@ public partial class VisualShots
         var paths = runner.Sim.Paths;
         _scene.SpawnColonists(Math.Max(0, n - colony.Colonists.Count));
         await Frames(2);
+        int jobsBefore = map.Jobs.Count;
 
         var frameMs = new List<double>();
         var tickMs = new List<double>();
@@ -810,11 +812,15 @@ public partial class VisualShots
         Metric(p + "_tick_ms_avg", tickMs.Count > 0 ? tickMs.Average() : 0);
         Metric(p + "_tick_ms_max", tickMs.Count > 0 ? tickMs.Max() : 0);
         Metric(p + "_paths_pending_max", pendingMax);
+        int jobsDone = jobsBefore - map.Jobs.Count;
+        Metric(p + "_jobs_done", jobsDone);
+        Metric(p + "_jobs_left", map.Jobs.Count);
         Metric(p + "_profile", $"frames:{frames} ticks:{tickMs.Count} render_cpu_ms_avg:{renderCpuMs / frames:0.##} render_gpu_ms_avg:{renderGpuMs / frames:0.##} " +
             $"tick_ms_p99:{(tickMs.Count > 0 ? Percentile(tickMs, 0.99) : 0):0.##}");
         var activities = colony.Colonists.GroupBy(c => c.Stuck ? "Stuck" : c.Activity.ToString()).OrderBy(g => g.Key).Select(g => $"{g.Key}:{g.Count()}");
         Metric(p + "_activity", $"{string.Join(' ', activities)} jobs_left:{map.Jobs.Count}");
-        if (n == BenchCounts[0]) Metric(p + "_ok", avg <= BenchFrameMsAvgLimit && p99 <= BenchFrameMsP99Limit ? 1 : 0);
+        if (n == BenchCounts[0])
+            Metric(p + "_ok", avg <= BenchFrameMsAvgLimit && p99 <= BenchFrameMsP99Limit && colony.Colonists.Count == n && jobsDone > 0 ? 1 : 0);
         if (n == BenchCounts[^1]) CheckColonistBar("bench_colonist_bar");
     }
 
