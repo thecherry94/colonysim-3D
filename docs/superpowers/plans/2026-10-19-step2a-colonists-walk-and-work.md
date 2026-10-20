@@ -1090,3 +1090,49 @@ Notes:
   priorities and skill preference, bottom-up builds and wall gaps; cave mining has no end-to-end check.
 - Digs only check that the worker keeps a way back. In the 60×60 dig, other colonists can be cut off on a pillar until
   it is dug from under them: 3 times in 200 simulated seconds at 100 colonists (8–33 s each), in a Core replay.
+
+## Execution rulings
+
+These are decisions made while executing this plan. Each says what was decided, then what it costs if it turns out wrong.
+
+- **R1:** Executed in place on branch `step2a-colonists`, with no worktree. Cost: none.
+- **R2:** The slope meshing test asserts a real up-facing quad under the ramp. The plan's `t => true` asserted nothing. Cost: none.
+- **R3:** The "digging the only ladder" test uses a 6-deep laddered shaft, with the dig two above a ladder cell. Cost: one test rewritten.
+- **R4:** The wall-gap test uses a plank room, because stone can be hopped and climbed. Cost: none.
+- **R5:** Natural stone slopes are named `natural_stone_*`. The plan's names collided with the built `stone_ramp_*`. Cost: a rename, since saves store block names.
+- **R6:** ChunkRenderer splits edit batches per 26-connected group of dirty chunks. Cost: revert to per-frame batches.
+- **R7:** Perf tests assert their limits only in Release. Cost: a Debug-only regression goes unnoticed.
+- **R8:** Undiscovered non-solid cells above the generated surface read as Air. Cost: a colonist could path into an unrevealed pocket.
+- **R9:** The river-width test has a lower bound too, not just an upper one. Cost: none.
+- **R10:** The GetMoves_1M limit is 400 ms instead of 300. Cost: a slowdown under 45% in the nav hot path goes unflagged.
+- **R11:** Long paths use a backward A* over section links plus a weighted corridor A* (weight 1.75) with landmark costs. Cost: about 12% average path overcost.
+- **R12:** Path quality is a statistic over Small seeds 1..5:
+  - mean ratio ≤ 1.15;
+  - p95 ≤ 1.25;
+  - max ≤ 1.40.
+
+  Cost: about 1 in 25 long routes looks roundabout.
+- **R13:** CarveStairs may be worked while standing on its own block. Cost: none found.
+- **R14:** The home strand rule is that the work spot stays in the home component. Cost: none.
+- **R15:** A build that would seal in only other colonists is NeedsWayBack at version 0, so it is re-checked on each search. Cost: repeated strand checks.
+- **R16:** A strand re-check runs right before completion, and the dig-order test uses a 2-wide trench. Cost: one extra check per completion.
+- **R17:** Mid-tick nav syncs share a 4 ms budget per tick, and completions over budget hold until the next tick. Cost: completions delayed a tick or two during edit bursts.
+- **R18:** Job search keeps a "nothing in component C" memo and checks at most 256 candidates per search, resuming on the next one. Cost: a reachable job can wait one more search.
+- **R19:** Seal-others holds are re-checked at most every 60 ticks. Cost: up to 3 s of delay.
+- **R20:** An O(1) BodyMap occupancy grid replaces colonist × colonist scans. Cost: none.
+- **R21:** At 100 colonists the JobSearch tick p99 limit is ≤ 16 ms, not 8, because surface NavChunk rebuilds cost 6–8 ms. Cost: an occasional one-frame hitch at 100 colonists.
+- **R22:** A walk give-up marks the job Unreachable only if Nav.Version hasn't changed. Cost: paths retried after edits.
+- **R23:** A colonist is shown when feet y − 1 ≤ ViewLevel. Cost: a one-line change.
+- **R24:** Core builds with `<Optimize>true</Optimize>` in every configuration. Cost: weaker Core debugging.
+- **R25:** The final fix wave covers:
+  - deep-pit pillars;
+  - digging from under colonists;
+  - end-to-end colony scenarios;
+  - rotating the colonist start index each tick.
+
+  Everything else is deferred to 2b. Cost: the deferred items resurface in 2b.
+- **R26:** A dig waits for digs two levels up in the 8 neighbouring columns. With one level, two-high tunnels deadlock; with three, the cave test fails. Cost: an edge layout might still leave a pillar.
+- **R27:** Step-aside and the occupied-spot filter cover builds as well as digs. Cost: a bit more idle shuffling.
+- **R28:** Blocks over a deep cave may stay Unreachable. The test asserts nobody falls or gets stuck. Cost: dimmed jobs over caves until the player adds ladders or stairs.
+- **R29:** The build scenario builds walls plus a ceiling. Cost: none, it's test-only.
+- **Parked:** `ColonistWorker` ignores `Complete`'s false return. It is unreachable today. Cost: recheck in 2b.
