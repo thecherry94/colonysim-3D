@@ -69,34 +69,56 @@ public class ColonyScenarioTests
         for (int y = Surface; y > Surface - PitDepth; y--) Assert.Equal(Blocks.Air, map.World.GetBlock(PitX + 5, y, PitZ + 5));
     }
 
-    [Theory, InlineData(1), InlineData(2)]
+    [Theory, InlineData(1), InlineData(2), InlineData(3)]
     public void PitOverHiddenCave_NobodyFallsIn(int seed)
     {
         // A cave nobody knows of under the pit's middle 8 × 8, its floor 9 below the pit's: digging the pit breaks into
         // it. Fog reads as solid, so whoever stood on the last block over it when it was dug would drop 13.
         const int caveFloor = Surface - PitDepth - 9;
+        var cave = (X0: PitX + 2, X1: PitX + PitSize - 3, Z0: PitZ + 2, Z1: PitZ + PitSize - 3);
         var sim = Colony(seed, 3, w =>
         {
             for (int y = caveFloor + 1; y <= Surface - 5; y++)
-                for (int z = PitZ + 2; z < PitZ + PitSize - 2; z++)
-                    for (int x = PitX + 2; x < PitX + PitSize - 2; x++) w.SetBlock(x, y, z, Blocks.Air, markDirty: false);
+                for (int z = cave.Z0; z <= cave.Z1; z++)
+                    for (int x = cave.X0; x <= cave.X1; x++) w.SetBlock(x, y, z, Blocks.Air, markDirty: false);
         });
         var map = sim.Map;
-        Assert.Equal(Blocks.Stone, map.View.GetKnownBlock(PitX + 5, Surface - 5, PitZ + 5)); // hidden
+        Assert.True(Blocks.Registry.Get(map.View.GetKnownBlock(PitX + 5, Surface - 5, PitZ + 5)).IsSolid); // hidden
         DesignatePit(map);
         int longestFall = RunToEnd(sim, 100_000);
         Assert.Equal(Blocks.Air, map.View.GetKnownBlock(PitX + 5, Surface - 5, PitZ + 5)); // broken into
         Assert.True(longestFall <= 1, $"someone fell {longestFall}");
         AssertNobodyStuck(sim);
-        // Everything is dug that anyone can reach. Blocks of the last layer over the cave whose neighbours all opened
+        // Everything is dug that anyone can reach. Blocks of the last layers over the cave whose neighbours all opened
         // into it first are left standing alone over a 9-deep drop: nowhere within reach to dig them from can be got to.
         sim.Tick();
         Assert.All(map.Jobs.All, j =>
         {
-            Assert.Equal((JobKind.Dig, Surface - 4), (j.Kind, j.Position.Y));
+            var q = j.Position;
+            Assert.True(j.Kind == JobKind.Dig && q.Y >= Surface - 5 && q.X >= cave.X0 && q.X <= cave.X1 && q.Z >= cave.Z0 && q.Z <= cave.Z1,
+                $"{j.Kind} at {q} is not over the cave");
             Assert.DoesNotContain(WorkRules.WorkSpots(map, j), s => map.Nav.ComponentOf(s) == sim.HomeComponent);
         });
-        Assert.True(map.Jobs.Count <= 12, $"{map.Jobs.Count} jobs left: {Left(map)}");
+    }
+
+    [Theory, InlineData(1), InlineData(2)]
+    public void TwoRoomMine_DugThroughRock(int seed)
+    {
+        // The harness's done_mine: carved stairs 5 down east into a 4 × 3 room two high, then 4 more down from its far
+        // side into a second room. Rooms and stairs are dug as tunnels, solid rock above them.
+        var sim = Colony(seed, 3);
+        var map = sim.Map;
+        int ex = 36, ez = 32, top = Surface;
+        int roomA = ex + 5, run2 = roomA + 4, roomB = run2 + 4, floorA = top - 4, floorB = floorA - 4;
+        Designator.Apply(map, DesignationTool.DigStairs, BuildMaterial.Wood, new DragBox(new(ex, top, ez), new(ex + 4, top, ez)));
+        Designator.Apply(map, DesignationTool.Dig, BuildMaterial.Wood, new DragBox(new(roomA, floorA, ez - 1), new(roomA + 3, floorA + 1, ez + 1)));
+        Designator.Apply(map, DesignationTool.DigStairs, BuildMaterial.Wood, new DragBox(new(run2, floorA - 1, ez), new(run2 + 3, floorA - 1, ez)));
+        Designator.Apply(map, DesignationTool.Dig, BuildMaterial.Wood, new DragBox(new(roomB, floorB, ez - 1), new(roomB + 3, floorB + 1, ez + 1)));
+        int longestFall = RunToEnd(sim, 30_000);
+        Assert.True(map.Jobs.Count == 0, $"{map.Jobs.Count} jobs left: {Left(map)}");
+        AssertNobodyStuck(sim);
+        Assert.True(longestFall <= 1, $"someone fell {longestFall}");
+        Assert.Equal(Blocks.CarvedStairs(Blocks.Stone, Facing.West), map.World.GetBlock(run2 + 3, floorB, ez));
     }
 
     [Theory, InlineData(1), InlineData(2), InlineData(3)]

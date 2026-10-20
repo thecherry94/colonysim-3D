@@ -84,17 +84,17 @@ public class JobQueueTests
         }
     }
 
-    [Fact] public void Dig_WaitsForDigsOneUpInTheNeighbouringColumns()
+    [Fact] public void Dig_WaitsForDigsTwoUpInTheNeighbouringColumns()
     {
-        // So no column of a dig runs more than one level ahead of its neighbours, leaving a pillar no one can reach.
+        // So no column of a dig runs so far ahead of its neighbours that their tops are left out of reach.
         var q = new JobQueue();
         var low = q.Add(new JobSpec(new(10, 20, 10), JobKind.Dig, Blocks.Air));
-        var side = q.Add(new JobSpec(new(11, 21, 9), JobKind.CarveStairs, Blocks.Stone));
+        var side = q.Add(new JobSpec(new(11, 22, 9), JobKind.CarveStairs, Blocks.Stone));
         Assert.True(side.WaitingFor == 0);
         Assert.Equal(1, low.WaitingFor);
-        var far = q.Add(new JobSpec(new(12, 21, 10), JobKind.Dig, Blocks.Air)); // two columns over: no wait
-        var level = q.Add(new JobSpec(new(9, 20, 10), JobKind.Dig, Blocks.Air)); // same level: no wait
-        Assert.Equal((1, 0, 0), (low.WaitingFor, far.WaitingFor, level.WaitingFor));
+        var far = q.Add(new JobSpec(new(12, 22, 10), JobKind.Dig, Blocks.Air)); // two columns over: no wait
+        var near = q.Add(new JobSpec(new(9, 21, 10), JobKind.Dig, Blocks.Air)); // one up: no wait (a tunnel's next column)
+        Assert.Equal((1, 0, 0), (low.WaitingFor, far.WaitingFor, near.WaitingFor));
         q.Remove(side.Position);
         Assert.Equal(0, low.WaitingFor);
         Assert.Equal(3, q.ReadyCount);
@@ -124,7 +124,7 @@ public class JobQueueTests
                     if (Enumerable.Range(1, 3).Any(k => DigAt(o + new Int3(0, k, 0)))) return false;
                     for (int dz = -1; dz <= 1; dz++)
                         for (int dx = -1; dx <= 1; dx++)
-                            if ((dx != 0 || dz != 0) && DigAt(o + new Int3(dx, 1, dz))) return false;
+                            if ((dx != 0 || dz != 0) && DigAt(o + new Int3(dx, 2, dz))) return false;
                     return true;
                 }
                 for (int k = 1; k <= 4; k++)

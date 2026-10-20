@@ -4,8 +4,8 @@ namespace ColonySim.Core;
 /// Pending jobs keyed by cell, with ids, claims, progress and a per-chunk spatial index.
 /// <para>
 /// It also keeps the work order: digs and carves go top-down, builds bottom-up. A dig or carve waits while a dig or
-/// carve is 1–3 cells straight above it, or one cell up in a neighbouring column (so no column of a dig gets more than
-/// a level ahead of the next, leaving a pillar too tall to reach the top of); a build waits while another build is 1–4
+/// carve is 1–3 cells straight above it, or two cells up in a neighbouring column (<see cref="NeighbourLead"/>: no column
+/// of a dig gets so far ahead of the next that its top is left out of reach); a build waits while another build is 1–4
 /// cells below it, in its column or a neighbouring one. The waiting counts are kept up to date as jobs come and go,
 /// and each chunk lists its ready jobs apart, by kind, so a job search only ever looks at jobs of the kinds it wants
 /// that can be worked now.
@@ -207,6 +207,13 @@ public sealed class JobQueue
         job.ClaimedBy = 0;
     }
 
+    /// <summary>
+    /// How far up in a neighbouring column a dig or carve waits for another: a column gets at most this many levels
+    /// ahead of the next, so a colonist on its floor can still reach the next one's top (2 up). One would deadlock a
+    /// tunnel two high: there the next column's top can only be reached from this column's floor.
+    /// </summary>
+    const int NeighbourLead = 2;
+
     static bool IsDig(JobKind k) => k is JobKind.Dig or JobKind.CarveStairs;
 
     /// <summary>
@@ -227,8 +234,8 @@ public sealed class JobQueue
                 for (int dx = -1; dx <= 1; dx++)
                 {
                     if (dx == 0 && dz == 0) continue;
-                    if (delta > 0 && IsDigAt(p + new Int3(dx, 1, dz))) job.WaitingFor++;
-                    if (_jobs.TryGetValue(p + new Int3(dx, -1, dz), out var below) && IsDig(below.Kind)) Wait(below, delta);
+                    if (delta > 0 && IsDigAt(p + new Int3(dx, NeighbourLead, dz))) job.WaitingFor++;
+                    if (_jobs.TryGetValue(p + new Int3(dx, -NeighbourLead, dz), out var below) && IsDig(below.Kind)) Wait(below, delta);
                 }
             return;
         }
